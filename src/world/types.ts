@@ -11,7 +11,7 @@ export type WorldStatus =
   | "failed"
   | "placeholder";
 
-export type WorldMode = "placeholder" | "happy-oyster";
+export type WorldMode = "placeholder" | "orbis" | "happy-oyster";
 
 /** Every scene is one Travel of this many seconds. Directing worlds report no cap, so the clock is ours. */
 export const TRAVEL_SECONDS = 180;

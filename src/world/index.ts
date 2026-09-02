@@ -1,4 +1,5 @@
 export { PlaceholderWorld } from "./placeholder/PlaceholderWorld";
+export { OrbisWorld } from "./orbis/OrbisWorld";
 export { HappyOysterWorld } from "./happy-oyster/HappyOysterWorld";
 export type { HappyOysterWorldProps } from "./happy-oyster/HappyOysterWorld";
 export { getWorldConfig } from "./token";
