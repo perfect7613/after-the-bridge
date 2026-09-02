@@ -74,3 +74,9 @@ These are the only first-party modules. Next.js `app/` is composition and framew
 - Optional `hear` returns text; Chrome sends that text through the same Chapter input seam as a card. STT is not required to finish the chapter.
 - Site tool descriptions describe function. Wren's persona lives in the Player's opening prompt.
 - No iframes. No clips. No dubbing. No `NEXT_PUBLIC_` secrets.
+
+## Judging
+
+See [docs/RUBRIC.md](docs/RUBRIC.md). The four Challenge criteria are scored equally. Evidence lives on the live page and in the video, not in this file.
+
+Chrome's default is static tools. We tear tools down on purpose: capability is Chapter state. If the Site tools popover does not change between scenes, leverage has failed.

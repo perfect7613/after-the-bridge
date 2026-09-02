@@ -17,7 +17,7 @@ docs/adr/             accepted architecture decisions
 CONTEXT.md            domain language
 ```
 
-See [CONTEXT.md](CONTEXT.md). Product requirements: [issue #1](https://github.com/perfect7613/after-the-bridge/issues/1).
+See [CONTEXT.md](CONTEXT.md) and [docs/RUBRIC.md](docs/RUBRIC.md). Product requirements: [issue #1](https://github.com/perfect7613/after-the-bridge/issues/1).
 
 ## License
 
