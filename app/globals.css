@@ -42,6 +42,23 @@ body {
   object-fit: cover;
 }
 
+/* ReactorView puts className on a relative wrapper, not the <video>. */
+.world-stage > .world-video {
+  position: absolute !important;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.world-stage video {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .world-poster {
   position: absolute;
   inset: 0;
