@@ -5,25 +5,28 @@
 
 ## Context
 
-Dialogue should be heard, not only read. [Indus Creator Studio dubbing](https://indus.sarvam.ai/creator-studio/dubbing) is Sarvam's batch pipeline: upload a finished video, transcribe, synthesise, mux. A live Happy Oyster Travel is a WebRTC stream, not a file, so that pipeline cannot speak a line as Wren says it.
+Dialogue should be heard, and the Player may speak a line instead of clicking. Sarvam's model APIs cover that: **Bulbul v3 TTS** (`POST https://api.sarvam.ai/text-to-speech`, `sarvamai` `textToSpeech.convert`) and **Saaras v3 STT** (`POST https://api.sarvam.ai/speech-to-text`, `speechToText.transcribe`). Auth header `api-subscription-key`. Key stays on the server.
 
-The same voice stack Creator Studio uses — **Bulbul v3** — is available as a TTS API: REST (`POST https://api.sarvam.ai/text-to-speech`, max 2500 characters), HTTP stream, or WebSocket. Official JS client: `sarvamai` (`SarvamAIClient.textToSpeech.convert`). Auth header `api-subscription-key`. Key stays on the server.
+We are not localising video. No dubbing jobs, no Creator Studio, no muxing speech onto the Travel.
 
 ## Decision
 
 **Voice** is its own module with a real seam (two adapters):
 
-1. **Silent** — no audio. Development and tests.
-2. **Sarvam** — Bulbul v3 TTS. Production live dialogue.
+1. **Silent** — no audio in or out. Development and tests.
+2. **Sarvam** — Bulbul for `speak`, Saaras for `hear` when we actually need spoken player input.
 
-Interface: `speak({ speaker, text, tone })`. Speakers are Chapter characters (`wren`, `stranger`), each bound to one Bulbul voice. Chrome plays the returned audio. Chapter and Wren never import `sarvamai`.
+Interface:
 
-The Next.js route `app/api/voice/speak/route.ts` is framework wiring for the Sarvam adapter, same pattern as the Happy Oyster token route. `SARVAM_API_KEY` is never `NEXT_PUBLIC_`. Live play uses REST (or HTTP stream if first-byte latency is too high). Not WebSocket — we are not building a barge-in voice agent.
+- `speak({ speaker, text, tone })` — required. Characters `wren` and `stranger`. Chrome plays the bytes. Best-effort: failure never blocks the Chapter.
+- `hear(audio)` — optional. Returns transcript text. Chrome may send that text as a Chapter input (same seam as a card click). Cards and Codex remain the default; STT is not required to finish the chapter.
 
-**Creator Studio / dubbing jobs are not the live path.** They may be used once, offline, to localise the recorded demo video for YouTube. That is shipping work, not game runtime. Do not record Travels in order to dub them.
+Next.js routes `app/api/voice/speak/route.ts` and `app/api/voice/hear/route.ts` are framework wiring for the Sarvam adapter. `SARVAM_API_KEY` is never `NEXT_PUBLIC_`. TTS uses REST (HTTP stream only if first-byte is too slow). STT uses REST transcribe on a short clip (`en-IN`, `saaras:v3`). Not a realtime voice-agent WebSocket.
+
+Ship TTS with Scene 1. Ship STT only if speaking a choice is clearly better than cards in playtests. Do not block #7 on `hear`.
 
 ## Consequences
 
-- Deleting Voice would leak Sarvam types into Chrome and into Wren's `say` handler.
-- A dropped TTS call must not block the Chapter: text still appears; audio is best-effort.
-- Do not add a third "clip dubbing" adapter into World. That would resurrect footage.
+- Deleting Voice would leak `sarvamai` into Chrome and Wren's `say` handler.
+- Chapter never sees audio bytes — only text inputs and narration.
+- No third adapter for video dubbing. Out of scope, not deferred.

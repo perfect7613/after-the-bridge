@@ -11,7 +11,7 @@ app/                  Next.js composition (page, token route, voice route)
 src/chapter/          story state — the Chapter module
 src/wren/             capability registration — the Wren module
 src/world/            live picture — placeholder + Happy Oyster adapters
-src/voice/            spoken dialogue — silent + Sarvam adapters
+src/voice/            dialogue — TTS required, STT optional; silent + Sarvam adapters
 src/chrome/           player-facing UI
 docs/adr/             accepted architecture decisions
 CONTEXT.md            domain language

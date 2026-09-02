@@ -1,12 +1,13 @@
 # Voice
 
-Deep module. What the Player hears.
+Deep module. Spoken dialogue.
 
-Interface: `speak({ speaker, text, tone })`. Speakers are Chapter characters. Audio is best-effort: a failed speak never blocks the Chapter.
+- `speak({ speaker, text, tone })` — Player hears Wren or the stranger. Required. Best-effort.
+- `hear(audio)` — optional transcript of the Player. Same Chapter input seam as a card. Not required to finish the chapter.
 
 Two adapters (ADR 0002):
 
-- `silent/` — no network, no sound
-- `sarvam/` — Bulbul v3 TTS. The route `app/api/voice/speak/route.ts` is framework wiring for this adapter. The key never leaves the server.
+- `silent/` — no network
+- `sarvam/` — Bulbul v3 TTS, Saaras v3 STT. Routes under `app/api/voice/`. Key never leaves the server.
 
-Creator Studio dubbing is not an adapter here. It is an offline tool for the demo video only.
+No dubbing.
