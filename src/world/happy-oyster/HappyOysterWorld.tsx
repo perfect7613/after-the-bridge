@@ -73,6 +73,16 @@ function Travel({ scene, steer, active, worlds, muted, onClock, onEnded, onStatu
     report("held", err instanceof Error ? err.message : String(err));
   });
 
+  // Surface the world id the moment the model names it, so a build that is
+  // interrupted still leaves an id to pin in REACTOR_WORLD_IDS.
+  useEffect(
+    () =>
+      ho.model.onWorldState((s) => {
+        if (s.encrypted_world_id) console.info(`[world] ${s.phase} ${s.world_status ?? ""} id=${s.encrypted_world_id}`);
+      }),
+    [ho.model],
+  );
+
   // Scene lifecycle: end the previous Travel, attach this scene's world, start.
   useEffect(() => {
     const gen = ++generation.current;
@@ -89,7 +99,7 @@ function Travel({ scene, steer, active, worlds, muted, onClock, onEnded, onStatu
       try {
         if (ho.phase === "idle" || ho.phase === "failed" || ho.phase === "ended") {
           report("connecting");
-          await ho.connect();
+          await ho.connect(getJwt);
           if (stale()) return;
         }
         if (ho.streaming) {
