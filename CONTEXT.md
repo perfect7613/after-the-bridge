@@ -43,6 +43,12 @@ A `decide` outcome from the Chapter (`refused` + a Ledger citation). Not a tool 
 **Elicitation**
 A pending question the Chapter opens. Chrome shows the countdown. Wren's `ask_player` waits on it. Timeout is the answer `"silence"`.
 
+**Voice**
+What the Player hears: spoken dialogue for Chapter characters. Wren still cannot hear the World; Voice is for lines, not for the Travel's ambient audio.
+
+**Speaker**
+A named character Voice can speak as (`wren`, `stranger`). Bound to one Bulbul voice in the Sarvam adapter.
+
 ## Modules
 
 These are the only first-party modules. Next.js `app/` is composition and framework wiring, not a domain module.
@@ -51,15 +57,19 @@ These are the only first-party modules. Next.js `app/` is composition and framew
 |---|---|---|
 | **Chapter** | Story state, Ledger, Trust, beats, scene exits, pending elicitation, desired capabilities | DOM, WebMCP, Reactor |
 | **Wren** | Registering and tearing down capabilities to match the Chapter snapshot; execute handlers | Story rules, pixels |
-| **World** | `enterScene`, `steer`, `setMood`, clock; placeholder adapter and Happy Oyster adapter | Story rules, tools |
-| **Chrome** | Choice cards, dialogue, ledger panel, toast, copy-prompt, countdown UI | Story rules, tokens, SDK |
+| **World** | `enterScene`, `steer`, `setMood`, clock; placeholder adapter and Happy Oyster adapter | Story rules, tools, speech |
+| **Voice** | `speak({ speaker, text, tone })`; silent adapter and Sarvam adapter | Story rules, pixels, tools |
+| **Chrome** | Choice cards, dialogue, ledger panel, toast, copy-prompt, countdown UI, playing Voice audio | Story rules, tokens, SDKs |
 
 **Token minting is not a module.** It is implementation inside the Happy Oyster adapter. The World interface never mentions JWTs.
+
+**Sarvam's API key is not a module.** It is implementation inside the Sarvam Voice adapter. The Voice interface never mentions Bulbul, dubbing jobs, or Creator Studio.
 
 ## Invariants
 
 - Player clicks and Codex tool calls enter the Chapter through the same input seam.
 - Desired capabilities are a function of the Chapter snapshot. Wren syncs; it does not decide.
 - The World is steered from Chapter beats. The Chapter does not import Reactor.
+- Chrome asks Voice to speak Chapter narration. A failed speak never blocks the Chapter.
 - Site tool descriptions describe function. Wren's persona lives in the Player's opening prompt.
-- No iframes. No clips. No `NEXT_PUBLIC_` secrets.
+- No iframes. No clips. No `NEXT_PUBLIC_` secrets. Creator Studio dubbing is not a runtime path.
