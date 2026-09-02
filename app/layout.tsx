@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, Newsreader } from "next/font/google";
+import { WebmcpBoot } from "./WebmcpBoot";
 import "./globals.css";
 
 const newsreader = Newsreader({
@@ -19,6 +20,12 @@ export const metadata: Metadata = {
   title: "After the Bridge",
   description:
     "A one-chapter survival story. Your companion is an agent wearing WebMCP tools as a body; the world is generated live.",
+  openGraph: {
+    title: "After the Bridge",
+    description:
+      "Play a survival chapter with Wren, an AI companion whose body is the WebMCP tools this page registers. The world is generated live.",
+    type: "website",
+  },
 };
 
 export const viewport: Viewport = {
@@ -30,7 +37,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${newsreader.variable} ${plexMono.variable}`}>
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <WebmcpBoot />
+        {children}
+      </body>
     </html>
   );
 }

@@ -17,6 +17,8 @@ export interface WrenState {
   webmcp: boolean;
   registered: string[];
   activity: Activity[];
+  /** True while a site tool execute is in flight. */
+  busy: boolean;
 }
 
 type Listener = (state: WrenState) => void;
@@ -31,6 +33,7 @@ export class Wren {
   private readonly listeners = new Set<Listener>();
   private activity: Activity[] = [];
   private nextId = 1;
+  private busy = 0;
   private unsubscribe: (() => void) | null = null;
   private syncing: Promise<void> = Promise.resolve();
 
@@ -46,12 +49,43 @@ export class Wren {
 
   static detect(): ModelContextLike | undefined {
     if (typeof document === "undefined") return undefined;
-    const ctx = (document as Document & { modelContext?: WebMCP.ModelContext }).modelContext;
+    const doc = document as Document & { modelContext?: WebMCP.ModelContext };
+    const nav = typeof navigator === "undefined" ? undefined : (navigator as Navigator & { modelContext?: WebMCP.ModelContext });
+    const ctx = doc.modelContext ?? nav?.modelContext;
     return ctx && typeof ctx.registerTool === "function" ? ctx : undefined;
   }
 
+  /**
+   * Resolves with modelContext as soon as it exists. Does not fire a dummy
+   * `undefined` first: attaching then tearing down aborts every tool, and the
+   * spec says aborted tools are gone. ChatGPT keeps the old bindings.
+   */
+  static watch(onReady: (ctx: ModelContextLike | undefined) => void, waitMs = 20_000): () => void {
+    const first = Wren.detect();
+    if (first) {
+      onReady(first);
+      return () => {};
+    }
+    if (typeof window === "undefined") {
+      onReady(undefined);
+      return () => {};
+    }
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      const ctx = Wren.detect();
+      if (ctx) {
+        window.clearInterval(id);
+        onReady(ctx);
+      } else if (Date.now() - started >= waitMs) {
+        window.clearInterval(id);
+        onReady(undefined);
+      }
+    }, 50);
+    return () => window.clearInterval(id);
+  }
+
   get state(): WrenState {
-    return { webmcp: this.registry.available, registered: this.registry.names, activity: [...this.activity] };
+    return { webmcp: this.registry.available, registered: this.registry.names, activity: [...this.activity], busy: this.busy > 0 };
   }
 
   subscribe(fn: Listener): () => void {
@@ -85,7 +119,21 @@ export class Wren {
   }
 
   private async sync(snap: Snapshot) {
-    const specs = toolsFor(this.chapter, snap, { onCall: (name, input, result) => this.record(name, input, result) });
+    const specs = toolsFor(this.chapter, snap, { onCall: (name, input, result) => this.record(name, input, result) }).map(
+      (spec) => ({
+        ...spec,
+        execute: async (input: Record<string, unknown>, opts: { signal: AbortSignal }) => {
+          this.busy += 1;
+          this.emit();
+          try {
+            return await spec.execute(input, opts);
+          } finally {
+            this.busy -= 1;
+            this.emit();
+          }
+        },
+      }),
+    );
     await this.registry.sync(specs);
     this.emit();
   }

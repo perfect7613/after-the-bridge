@@ -36,15 +36,19 @@ export function StartCard({ webmcp, liveWorld, onBegin }: StartCardProps) {
     <div className="grain relative flex min-h-screen flex-col items-center justify-center bg-ink px-6 py-16 text-center">
       <p className="fade-in font-mono text-[11px] uppercase tracking-[0.4em] text-paper/40">A one-chapter survival story</p>
       <h1 className="fade-in mt-4 text-6xl font-light tracking-tight sm:text-7xl">After the Bridge</h1>
-      <p className="fade-in mt-6 max-w-xl text-lg leading-relaxed text-paper/70" style={{ animationDelay: "150ms" }}>
-        You travel with Wren. She is an agent wearing the tools this page gives her. What she can do is what is
-        registered; what she remembers is in a ledger you can open. The world is generated live. She cannot see it.
+      <p className="fade-in mt-6 max-w-xl text-lg leading-relaxed text-paper/80" style={{ animationDelay: "150ms" }}>
+        The city is gone. You are hurt, and your arm is getting worse. Wren pulled you out of the river and has stayed
+        with you since. Tonight you need shelter; tomorrow, antibiotics; then the one bridge still standing.
+      </p>
+      <p className="fade-in mt-4 max-w-xl text-base leading-relaxed text-paper/60" style={{ animationDelay: "220ms" }}>
+        Three scenes. Three minutes each. Every choice you make, Wren remembers. At the end she decides whether to
+        cross with you.
       </p>
 
       <div className="fade-in mt-10 grid w-full max-w-2xl gap-3 text-left sm:grid-cols-3" style={{ animationDelay: "300ms" }}>
-        <Step n="1" title="Open this page in Codex" body="ChatGPT desktop → Codex → in-app browser. Site tools appear in the composer." />
-        <Step n="2" title="Paste the opening prompt" body="It puts Wren's persona with you, not in the tools." />
-        <Step n="3" title="Or just play the cards" body="Cards and tools are the same input. Wren is optional; the story is not." />
+        <Step n="1" title="You take the cards" body="Each scene, you decide. That click is the story. Wren does not take it from you." />
+        <Step n="2" title="Wren answers with tools" body="Open this page inside Codex. She can press Begin herself, then she sees your move, looks, speaks, asks, or refuses." />
+        <Step n="3" title="Paste the opening prompt" body="It tells Codex she is Wren, and that she waits for you." />
       </div>
 
       <div className="fade-in mt-8 flex flex-wrap items-center justify-center gap-3" style={{ animationDelay: "450ms" }}>
@@ -56,6 +60,11 @@ export function StartCard({ webmcp, liveWorld, onBegin }: StartCardProps) {
           Begin
         </button>
       </div>
+      {webmcp && (
+        <p className="fade-in mt-4 max-w-md text-sm text-paper/55" style={{ animationDelay: "500ms" }}>
+          Wren is already on this page. She can press Begin from her tools, or you can click it. Then she waits for your first card.
+        </p>
+      )}
 
       <div className="fade-in mt-8 flex flex-wrap justify-center gap-4 font-mono text-[11px] uppercase tracking-[0.2em] text-paper/40" style={{ animationDelay: "600ms" }}>
         <span className="flex items-center gap-2">
@@ -88,6 +97,7 @@ export function SceneCard({ snapshot }: { snapshot: Snapshot }) {
     <div className="fade-in absolute inset-0 z-40 flex flex-col items-center justify-center bg-black text-center">
       <p className="font-mono text-[11px] uppercase tracking-[0.4em] text-paper/40">{snapshot.sceneSubtitle}</p>
       <h2 className="mt-3 text-5xl font-light">{snapshot.sceneTitle}</h2>
+      <p className="mt-5 max-w-md px-6 text-base text-paper/65">{snapshot.goal}</p>
       {snapshot.wren.wounded && <p className="mt-4 text-sm italic text-rust">Wren is limping.</p>}
     </div>
   );
@@ -95,6 +105,7 @@ export function SceneCard({ snapshot }: { snapshot: Snapshot }) {
 
 export function EndingCard({ snapshot, onAgain }: { snapshot: Snapshot; onAgain: () => void }) {
   const together = snapshot.ending === "together";
+  const why = explainEnding(snapshot);
   return (
     <div className="grain relative min-h-screen bg-ink px-6 py-16">
       <div className="mx-auto max-w-3xl">
@@ -104,6 +115,12 @@ export function EndingCard({ snapshot, onAgain }: { snapshot: Snapshot; onAgain:
         </h1>
         <p className="fade-in mt-6 text-lg leading-relaxed text-paper/75" style={{ animationDelay: "150ms" }}>
           {snapshot.narration}
+        </p>
+        <p
+          className="fade-in mt-5 border-l-2 border-ember/50 pl-4 text-base leading-relaxed text-paper/70"
+          style={{ animationDelay: "220ms" }}
+        >
+          {why}
         </p>
 
         <div className="fade-in mt-10" style={{ animationDelay: "300ms" }}>
@@ -130,6 +147,27 @@ export function EndingCard({ snapshot, onAgain }: { snapshot: Snapshot; onAgain:
       </div>
     </div>
   );
+}
+
+/** One plain paragraph on why it ended this way, pointing at the ledger entry that decided it. */
+function explainEnding(snapshot: Snapshot): string {
+  const trust = `Trust ended at ${snapshot.trust} of 6.`;
+  const refusal = snapshot.ledger.find((e) => e.kind === "refusal");
+  const worst = snapshot.ledger
+    .filter((e) => (e.trustDelta ?? 0) < 0)
+    .sort((a, b) => (a.trustDelta ?? 0) - (b.trustDelta ?? 0))[0];
+  const lightWent = snapshot.ledger.some((e) => e.text === "The light went before either of us moved.");
+
+  if (snapshot.ending === "together") {
+    return worst
+      ? `${trust} She followed anyway. The moment that cost the most: "${worst.text}" She had not forgotten it.`
+      : `${trust} Nothing you did gave her a reason not to follow, and she noticed that too.`;
+  }
+  if (lightWent) return `${trust} Neither of you crossed before the light went. Waiting was also a choice.`;
+  if (refusal && worst) {
+    return `${trust} Wren refused because of one moment in the ${SCENES[worst.scene].title.toLowerCase()}: "${worst.text}" Below 3, she stops following on your word alone.`;
+  }
+  return `${trust} Wren stayed on her side of the river.`;
 }
 
 function EndingEntry({ entry }: { entry: LedgerEntry }) {

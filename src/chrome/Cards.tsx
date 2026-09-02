@@ -6,15 +6,42 @@ export interface CardsProps {
   snapshot: Snapshot;
   onChoice: (id: string) => void;
   onExit: (id: string) => void;
+  onReady?: () => void;
   disabled?: boolean;
+  holdingForWorld?: boolean;
 }
 
-/** Player choice cards and exits. Every click is one Chapter input. */
-export function Cards({ snapshot, onChoice, onExit, disabled }: CardsProps) {
+/** Player choice cards and exits. Hidden while Wren still has the floor, or the world is catching up. */
+export function Cards({ snapshot, onChoice, onExit, onReady, disabled, holdingForWorld }: CardsProps) {
   const choices = snapshot.choices.filter((c) => !c.wrenOnly);
   const exits = snapshot.exits;
 
   if (snapshot.ending) return null;
+
+  if (snapshot.waitingOnWren || holdingForWorld) {
+    const copy = holdingForWorld
+      ? snapshot.waitingOnWren
+        ? "Wren is answering. Your next cards wait until the world has her move."
+        : "The world is catching up with Wren's move."
+      : "Wren is answering. Your next cards wait until she calls ready.";
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-[11px] uppercase tracking-[0.3em] text-paper/40">Wren's move</p>
+        <p className="rounded-md border border-ember/25 bg-ember/5 px-4 py-3 text-sm leading-snug text-paper/70">
+          {copy}
+        </p>
+        {onReady && snapshot.waitingOnWren && !holdingForWorld && (
+          <button
+            type="button"
+            onClick={onReady}
+            className="rounded-md border border-paper/20 px-4 py-2 text-left text-sm text-paper/70 transition hover:border-paper/50 hover:text-paper"
+          >
+            Take the cards back
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2">

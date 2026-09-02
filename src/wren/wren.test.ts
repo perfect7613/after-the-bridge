@@ -59,6 +59,7 @@ describe("ToolRegistry", () => {
 describe("Wren wears the Chapter", () => {
   async function mounted() {
     const chapter = new Chapter();
+    chapter.input({ kind: "begin", actor: "player" });
     const ctx = new FakeModelContext();
     const wren = new Wren(chapter, ctx);
     wren.mount();
@@ -73,30 +74,91 @@ describe("Wren wears the Chapter", () => {
     expect(ctx.tools.get("look")!.tool.annotations?.readOnlyHint).toBeUndefined();
   });
 
-  it("wounded unregisters run; the popover changes", async () => {
-    const { ctx, wren } = await mounted();
-    expect(ctx.names()).toContain("run");
-    await ctx.call("look", { direction: "toward the voice" });
-    await wren.settled();
-    expect(ctx.names()).not.toContain("run");
-    expect(ctx.names()).toContain("move_to");
-    expect(ctx.names()).not.toContain("decide");
+  it("registers get_scene_state with ChatGPT's no-arg schema so it is callable", async () => {
+    const { ctx } = await mounted();
+    const tool = ctx.tools.get("get_scene_state")!.tool;
+    expect(tool.name).toBe("get_scene_state");
+    expect(tool.title).toBe("get_scene_state");
+    expect(tool.inputSchema).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    const result = (await ctx.call("get_scene_state", {})) as ToolResult;
+    expect(result.ok).toBe(true);
+    expect(result.narration).toMatch(/Scene:/);
   });
 
-  it("no crowbar unregisters open; getting it back re-registers", async () => {
+  it("gives every registered tool a closed object schema", async () => {
+    const { ctx } = await mounted();
+    for (const name of ctx.names()) {
+      const schema = ctx.tools.get(name)!.tool.inputSchema as { type?: string; additionalProperties?: boolean };
+      expect(schema.type).toBe("object");
+      expect(schema.additionalProperties).toBe(false);
+    }
+  });
+
+  it("begin is on the title card; calling it starts the world and unregisters", async () => {
+    const chapter = new Chapter();
+    const ctx = new FakeModelContext();
+    const wren = new Wren(chapter, ctx);
+    wren.mount();
+    await wren.settled();
+    expect(ctx.names()).toEqual(["begin", "get_scene_state", "ready", "recall", "say"].sort());
+    const result = (await ctx.call("begin", {})) as ToolResult;
+    expect(result.ok).toBe(true);
+    await wren.settled();
+    expect(chapter.snapshot().begun).toBe(true);
+    expect(ctx.names()).not.toContain("begin");
+    expect(ctx.names()).toContain("look");
+  });
+
+  it("ready is registered from the title card and hands the cards back", async () => {
+    const chapter = new Chapter({ companion: "agent" });
+    const ctx = new FakeModelContext();
+    const wren = new Wren(chapter, ctx);
+    wren.mount();
+    await wren.settled();
+    expect(ctx.names()).toContain("ready");
+    chapter.input({ kind: "begin", actor: "player" });
+    await wren.settled();
+    expect(ctx.names()).toContain("ready");
+    chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
+    await wren.settled();
+    expect(ctx.names()).toContain("ready");
+    const result = (await ctx.call("ready", {})) as ToolResult;
+    expect(result.ok).toBe(true);
+    await wren.settled();
+    expect(chapter.snapshot().waitingOnWren).toBe(false);
+    expect(ctx.names()).toContain("ready");
+  });
+
+  it("wounded unregisters run; the popover changes", async () => {
     const { chapter, ctx, wren } = await mounted();
-    await ctx.call("decide", { choice: "stay_silent" });
-    await ctx.call("move_to", { place: "road" });
+    expect(ctx.names()).toContain("run");
+    expect(ctx.names()).toContain("decide");
+    expect(ctx.names()).not.toContain("move_to");
+    chapter.input({ kind: "decide", actor: "player", choice: "send_wren" });
+    await wren.settled();
+    expect(ctx.names()).not.toContain("run");
+    expect(ctx.names()).not.toContain("move_to");
+    expect(ctx.names()).toContain("decide");
+  });
+
+  it("open stays registered without the crowbar; execute fails until she has it", async () => {
+    const { chapter, ctx, wren } = await mounted();
+    chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
+    chapter.input({ kind: "move_to", actor: "player", place: "road" });
     await wren.settled();
     expect(ctx.names()).toContain("open");
 
-    await ctx.call("give", { item: "crowbar" });
+    const given = (await ctx.call("give", { item: "crowbar" })) as ToolResult;
+    expect(given.ok).toBe(true);
     await wren.settled();
-    expect(ctx.names()).not.toContain("open");
+    expect(ctx.names()).toContain("open");
+    const blocked = (await ctx.call("open", { target: "cabinet" })) as ToolResult;
+    expect(blocked.ok).toBe(false);
 
     chapter.input({ kind: "decide", actor: "player", choice: "give_back" });
     await wren.settled();
-    expect(ctx.names()).toContain("open");
+    const opened = (await ctx.call("open", { target: "cabinet" })) as ToolResult;
+    expect(opened.ok).toBe(true);
   });
 
   it("low trust unregisters follow_my_lead", async () => {
@@ -110,10 +172,10 @@ describe("Wren wears the Chapter", () => {
   it("decide can come back refused with a citation; there is no refuse tool", async () => {
     const { chapter, ctx, wren } = await mounted();
     chapter.input({ kind: "decide", actor: "player", choice: "send_wren" });
-    chapter.input({ kind: "move_to", actor: "wren", place: "road" });
+    chapter.input({ kind: "move_to", actor: "player", place: "road" });
     chapter.input({ kind: "decide", actor: "player", choice: "take_crowbar" });
     chapter.input({ kind: "decide", actor: "player", choice: "force_cabinet" });
-    chapter.input({ kind: "move_to", actor: "wren", place: "alley" });
+    chapter.input({ kind: "move_to", actor: "player", place: "alley" });
     chapter.input({ kind: "decide", actor: "player", choice: "player_first" });
     await wren.settled();
     expect(ctx.names()).not.toContain("refuse");
@@ -170,12 +232,54 @@ describe("Wren wears the Chapter", () => {
     await wren.settled();
     expect(wren.state.webmcp).toBe(false);
     expect(wren.state.registered).toEqual([]);
+    expect(chapter.input({ kind: "begin", actor: "player" }).ok).toBe(true);
     expect(chapter.input({ kind: "decide", actor: "player", choice: "answer" }).ok).toBe(true);
+  });
+
+  it("watch fires once when modelContext appears, without a dummy miss first", async () => {
+    vi.useFakeTimers();
+    const fakeDoc: { modelContext?: { registerTool: () => void } } = {};
+    vi.stubGlobal("document", fakeDoc);
+    vi.stubGlobal("window", globalThis);
+
+    const seen: boolean[] = [];
+    const stop = Wren.watch((ctx) => seen.push(Boolean(ctx)), 1000);
+    expect(seen).toEqual([]);
+
+    fakeDoc.modelContext = { registerTool: () => {} };
+    await vi.advanceTimersByTimeAsync(80);
+    expect(seen).toEqual([true]);
+    stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("execute handlers contain no story rules", async () => {
     const src = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./tools.ts", import.meta.url), "utf8"));
     expect(src).not.toMatch(/trust\s*[<>]=?\s*\d/);
     expect(src).not.toMatch(/wounded\s*=/);
+  });
+});
+
+describe("WrenSession", () => {
+  it("keeps tools registered across a second start(); dispose is the only abort", async () => {
+    const { WrenSession } = await import("./session");
+    const session = new WrenSession();
+    const ctx = new FakeModelContext();
+    const original = Wren.detect;
+    Wren.detect = () => ctx;
+    try {
+      session.start();
+      await session.settled();
+      expect(ctx.names()).toContain("get_scene_state");
+      const firstSignal = ctx.tools.get("get_scene_state")!.signal;
+      session.start();
+      await session.settled();
+      expect(ctx.tools.get("get_scene_state")!.signal).toBe(firstSignal);
+      session.dispose();
+      expect(ctx.names()).toEqual([]);
+    } finally {
+      Wren.detect = original;
+    }
   });
 });

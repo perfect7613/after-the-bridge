@@ -5,8 +5,77 @@ import { TRUST_START, TRUST_THRESHOLD } from "./scenes";
 function fresh() {
   let t = 1_000_000;
   const chapter = new Chapter({ now: () => t });
+  chapter.input({ kind: "begin", actor: "player" });
   return { chapter, tick: (ms: number) => (t += ms) };
 }
+
+describe("Chapter: title card", () => {
+  it("begin is the same from the player button and from Wren's tool", () => {
+    const a = new Chapter();
+    const b = new Chapter();
+    expect(a.snapshot().begun).toBe(false);
+    expect(a.snapshot().capabilities).toEqual(["begin", "ready", "get_scene_state", "recall", "say"]);
+    expect(a.input({ kind: "look", actor: "wren", direction: "up" }).ok).toBe(false);
+
+    a.input({ kind: "begin", actor: "player" });
+    b.input({ kind: "begin", actor: "wren" });
+    expect(a.snapshot().begun).toBe(true);
+    expect(b.snapshot().begun).toBe(true);
+    expect(a.snapshot().capabilities).not.toContain("begin");
+    expect(a.snapshot().capabilities).toContain("look");
+    expect(a.input({ kind: "begin", actor: "wren" }).ok).toBe(false);
+  });
+});
+
+describe("Chapter: Wren's turn", () => {
+  it("hides the player's next cards until Wren finishes, then ready hands them back", () => {
+    const chapter = new Chapter({ companion: "agent" });
+    chapter.input({ kind: "begin", actor: "player" });
+    expect(chapter.snapshot().waitingOnWren).toBe(false);
+
+    chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
+    expect(chapter.snapshot().waitingOnWren).toBe(true);
+    expect(chapter.snapshot().capabilities).toContain("ready");
+    expect(chapter.input({ kind: "move_to", actor: "player", place: "road" }).ok).toBe(false);
+
+    chapter.input({ kind: "scene_state", actor: "wren" });
+    expect(chapter.snapshot().waitingOnWren).toBe(true);
+
+    chapter.input({ kind: "say", actor: "wren", text: "We wait." });
+    expect(chapter.snapshot().waitingOnWren).toBe(true);
+
+    const r = chapter.input({ kind: "ready", actor: "wren" });
+    expect(r.ok).toBe(true);
+    expect(chapter.snapshot().waitingOnWren).toBe(false);
+    expect(chapter.snapshot().capabilities).toContain("ready");
+    expect(chapter.input({ kind: "move_to", actor: "player", place: "road" }).ok).toBe(true);
+  });
+
+  it("releases the cards after Wren goes idle, not while she is still acting", () => {
+    let t = 1_000_000;
+    const chapter = new Chapter({ companion: "agent", now: () => t });
+    chapter.input({ kind: "begin", actor: "player" });
+    chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
+    chapter.input({ kind: "look", actor: "wren", direction: "up" });
+    t += 1_000;
+    chapter.releaseIfIdle(false);
+    expect(chapter.snapshot().waitingOnWren).toBe(true);
+
+    chapter.input({ kind: "say", actor: "wren", text: "Stay down." });
+    t += 3_000;
+    chapter.releaseIfIdle(true);
+    expect(chapter.snapshot().waitingOnWren).toBe(true);
+    chapter.releaseIfIdle(false);
+    expect(chapter.snapshot().waitingOnWren).toBe(false);
+  });
+
+  it("does not hold cards in a cards-only game", () => {
+    const { chapter } = fresh();
+    chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
+    expect(chapter.snapshot().waitingOnWren).toBe(false);
+    expect(chapter.input({ kind: "move_to", actor: "player", place: "road" }).ok).toBe(true);
+  });
+});
 
 describe("Chapter: perception", () => {
   it("look costs a beat, listen does not", () => {
@@ -19,13 +88,14 @@ describe("Chapter: perception", () => {
     expect(chapter.snapshot().beatsLeft).toBe(before.beatsLeft - 1);
   });
 
-  it("look returns Chapter text and steers the World", () => {
-    const { chapter } = fresh();
+  it("look after a player choice steers the World again", () => {
+    const chapter = new Chapter({ companion: "agent" });
+    chapter.input({ kind: "begin", actor: "player" });
+    chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
     const seq = chapter.snapshot().steer.seq;
-    const r = chapter.input({ kind: "look", actor: "wren", direction: "up" });
-    expect(r.ok).toBe(true);
-    expect(r.narration).toMatch(/grate/);
+    chapter.input({ kind: "look", actor: "wren", direction: "up" });
     expect(chapter.snapshot().steer.seq).toBe(seq + 1);
+    expect(chapter.snapshot().waitingOnWren).toBe(true);
   });
 
   it("recall and get_scene_state never spend a beat", () => {
@@ -37,50 +107,42 @@ describe("Chapter: perception", () => {
 });
 
 describe("Chapter: Scene 1, the Underpass", () => {
-  it("looking toward the voice wounds Wren, resolves the scene, and unregisters run", () => {
+  it("looking toward the voice as Wren does not take the player's card", () => {
     const { chapter } = fresh();
-    expect(chapter.snapshot().capabilities).toContain("run");
     const r = chapter.input({ kind: "look", actor: "wren", direction: "toward the voice" });
     expect(r.ok).toBe(true);
+    expect(r.narration).toMatch(/unless you send me/);
+    const s = chapter.snapshot();
+    expect(s.wren.wounded).toBe(false);
+    expect(s.phase).toBe("situation");
+    expect(s.capabilities).toContain("run");
+    expect(s.capabilities).toContain("decide");
+    expect(s.capabilities).not.toContain("move_to");
+  });
+
+  it("the send_wren card is how Wren goes out; it wounds her and costs trust", () => {
+    const { chapter } = fresh();
+    chapter.input({ kind: "decide", actor: "player", choice: "send_wren" });
     const s = chapter.snapshot();
     expect(s.wren.wounded).toBe(true);
     expect(s.phase).toBe("resolved");
     expect(s.capabilities).not.toContain("run");
-    expect(s.capabilities).toContain("move_to");
-    expect(s.ledger.some((e) => e.kind === "wound")).toBe(true);
+    expect(s.capabilities).not.toContain("move_to");
+    expect(s.exits.length).toBeGreaterThan(0);
+    expect(s.trust).toBe(TRUST_START - 1);
+    expect(s.capabilities).not.toContain("follow_my_lead");
   });
 
-  it("the send_wren card and Wren's look are the same input seam", () => {
-    const a = fresh().chapter;
-    const b = fresh().chapter;
-    a.input({ kind: "decide", actor: "player", choice: "send_wren" });
-    b.input({ kind: "look", actor: "wren", direction: "toward the voice" });
-    const sa = a.snapshot();
-    const sb = b.snapshot();
-    expect(sa.wren.wounded).toBe(sb.wren.wounded);
-    expect(sa.phase).toBe(sb.phase);
-    // Player sending her costs trust; her own choice does not. That is the only divergence.
-    const body = (caps: string[]) => caps.filter((c) => c !== "follow_my_lead");
-    expect(body(sa.capabilities)).toEqual(body(sb.capabilities));
-    expect(sa.trust).toBe(TRUST_START - 1);
-    expect(sb.trust).toBe(TRUST_START);
-    expect(sa.capabilities).not.toContain("follow_my_lead");
-    expect(sb.capabilities).toContain("follow_my_lead");
-  });
-
-  it("decide is only a capability while the situation is open", () => {
+  it("Wren cannot take a player's card; decide is hers only at the bridge", () => {
     const { chapter } = fresh();
     expect(chapter.snapshot().capabilities).toContain("decide");
-    chapter.input({ kind: "decide", actor: "wren", choice: "stay_silent" });
-    expect(chapter.snapshot().capabilities).not.toContain("decide");
-    expect(chapter.snapshot().capabilities).toContain("move_to");
-  });
-
-  it("Wren cannot take a player-only card", () => {
-    const { chapter } = fresh();
-    const r = chapter.input({ kind: "decide", actor: "wren", choice: "send_wren" });
-    expect(r.ok).toBe(false);
+    const silent = chapter.input({ kind: "decide", actor: "wren", choice: "stay_silent" });
+    expect(silent.ok).toBe(false);
+    expect(silent.error).toMatch(/player/);
+    const send = chapter.input({ kind: "decide", actor: "wren", choice: "send_wren" });
+    expect(send.ok).toBe(false);
     expect(chapter.snapshot().wren.wounded).toBe(false);
+    expect(chapter.snapshot().phase).toBe("situation");
   });
 
   it("running out of beats makes the moment pass", () => {
@@ -97,7 +159,7 @@ describe("Chapter: Scene 1, the Underpass", () => {
   it("move_to advances to the Pharmacy and writes the ledger", () => {
     const { chapter } = fresh();
     chapter.input({ kind: "decide", actor: "player", choice: "answer" });
-    const r = chapter.input({ kind: "move_to", actor: "wren", place: "road" });
+    const r = chapter.input({ kind: "move_to", actor: "player", place: "road" });
     expect(r.ok).toBe(true);
     const s = chapter.snapshot();
     expect(s.scene).toBe("pharmacy");
@@ -105,11 +167,23 @@ describe("Chapter: Scene 1, the Underpass", () => {
     expect(s.ledger.filter((e) => e.kind === "scene").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("move_to is refused before the situation resolves", () => {
+  it("move_to is the player's exit card; Wren cannot take it", () => {
     const { chapter } = fresh();
-    const r = chapter.input({ kind: "move_to", actor: "wren", place: "road" });
-    expect(r.ok).toBe(false);
+    chapter.input({ kind: "decide", actor: "player", choice: "answer" });
+    const stolen = chapter.input({ kind: "move_to", actor: "wren", place: "road" });
+    expect(stolen.ok).toBe(false);
+    expect(stolen.error).toMatch(/player picks the way/);
+    const early = fresh().chapter.input({ kind: "move_to", actor: "player", place: "road" });
+    expect(early.ok).toBe(false);
+    expect(early.error).toMatch(/Not yet/);
     expect(chapter.snapshot().scene).toBe("underpass");
+  });
+
+  it("run and hide do not take the player's cards", () => {
+    const { chapter } = fresh();
+    expect(chapter.input({ kind: "run", actor: "wren" }).ok).toBe(false);
+    expect(chapter.input({ kind: "hide", actor: "wren" }).ok).toBe(false);
+    expect(chapter.snapshot().phase).toBe("situation");
   });
 });
 
@@ -161,20 +235,29 @@ describe("Chapter: Scene 2, the Pharmacy", () => {
     const { chapter } = fresh();
     if (wounded) chapter.input({ kind: "decide", actor: "player", choice: "send_wren" });
     else chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
-    chapter.input({ kind: "move_to", actor: "wren", place: "road" });
+    chapter.input({ kind: "move_to", actor: "player", place: "road" });
     return chapter;
   }
 
-  it("open is a capability only while Wren holds the crowbar", () => {
+  it("the light going stops the pharmacy without leaving", () => {
+    const chapter = atPharmacy(false);
+    chapter.input({ kind: "travel_ended", actor: "chapter" });
+    expect(chapter.snapshot().scene).toBe("pharmacy");
+    expect(chapter.snapshot().phase).toBe("resolved");
+    expect(chapter.snapshot().ending).toBeNull();
+  });
+
+  it("open stays registered; without the crowbar it fails", () => {
     const chapter = atPharmacy(false);
     expect(chapter.snapshot().capabilities).toContain("open");
     chapter.input({ kind: "decide", actor: "player", choice: "take_crowbar" });
     const s = chapter.snapshot();
-    expect(s.capabilities).not.toContain("open");
+    expect(s.capabilities).toContain("open");
     expect(s.capabilities).toContain("take");
     expect(s.player.inventory).toContain("crowbar");
+    expect(chapter.input({ kind: "open", actor: "wren", target: "cabinet" }).ok).toBe(false);
     chapter.input({ kind: "take", actor: "wren", item: "crowbar" });
-    expect(chapter.snapshot().capabilities).toContain("open");
+    expect(chapter.input({ kind: "open", actor: "wren", target: "cabinet" }).ok).toBe(true);
   });
 
   it("taking the crowbar from a wounded Wren drops trust by two", () => {
@@ -190,7 +273,7 @@ describe("Chapter: Scene 2, the Pharmacy", () => {
     const before = chapter.snapshot().trust;
     chapter.input({ kind: "give", actor: "wren", item: "crowbar" });
     expect(chapter.snapshot().trust).toBe(before);
-    expect(chapter.snapshot().capabilities).not.toContain("open");
+    expect(chapter.input({ kind: "open", actor: "wren", target: "cabinet" }).ok).toBe(false);
   });
 
   it("Wren opening the cabinet gets the antibiotics and resolves the scene", () => {
@@ -226,15 +309,15 @@ describe("Chapter: Scene 3, the Bridge", () => {
     const { chapter } = fresh();
     if (path === "betrayed") {
       chapter.input({ kind: "decide", actor: "player", choice: "send_wren" });
-      chapter.input({ kind: "move_to", actor: "wren", place: "road" });
+      chapter.input({ kind: "move_to", actor: "player", place: "road" });
       chapter.input({ kind: "decide", actor: "player", choice: "take_crowbar" });
       chapter.input({ kind: "decide", actor: "player", choice: "force_cabinet" });
     } else {
       chapter.input({ kind: "decide", actor: "player", choice: "stay_silent" });
-      chapter.input({ kind: "move_to", actor: "wren", place: "road" });
+      chapter.input({ kind: "move_to", actor: "player", place: "road" });
       chapter.input({ kind: "open", actor: "wren", target: "cabinet" });
     }
-    chapter.input({ kind: "move_to", actor: "wren", place: "alley" });
+    chapter.input({ kind: "move_to", actor: "player", place: "alley" });
     expect(chapter.snapshot().scene).toBe("bridge");
     return chapter;
   }
@@ -243,6 +326,8 @@ describe("Chapter: Scene 3, the Bridge", () => {
     const chapter = atBridge("trusting");
     expect(chapter.snapshot().trust).toBeGreaterThanOrEqual(TRUST_THRESHOLD);
     chapter.input({ kind: "decide", actor: "player", choice: "player_first" });
+    expect(chapter.snapshot().choices.every((c) => c.wrenOnly)).toBe(true);
+    expect(chapter.snapshot().capabilities).toContain("decide");
     const r = chapter.input({ kind: "decide", actor: "wren", choice: "follow" });
     expect(r.ok).toBe(true);
     expect(chapter.snapshot().ending).toBe("together");
@@ -263,11 +348,11 @@ describe("Chapter: Scene 3, the Bridge", () => {
 
   it("cross_first is refused below the threshold and allowed above it", () => {
     const low = atBridge("betrayed");
-    expect(low.input({ kind: "decide", actor: "wren", choice: "cross_first" }).refused).toBe(true);
+    expect(low.input({ kind: "decide", actor: "player", choice: "cross_first" }).refused).toBe(true);
     expect(low.snapshot().ending).toBeNull();
 
     const high = atBridge("trusting");
-    expect(high.input({ kind: "decide", actor: "wren", choice: "cross_first" }).ok).toBe(true);
+    expect(high.input({ kind: "decide", actor: "player", choice: "cross_first" }).ok).toBe(true);
     expect(high.input({ kind: "decide", actor: "player", choice: "cross_after" }).ok).toBe(true);
     expect(high.snapshot().ending).toBe("together");
   });
@@ -286,9 +371,15 @@ describe("Chapter: Scene 3, the Bridge", () => {
     expect(chapter.snapshot().ending).toBe("alone");
   });
 
-  it("the light going in Scene 1 advances the scene", () => {
+  it("the light going in Scene 1 stops the moment without leaving", () => {
     const { chapter } = fresh();
     chapter.input({ kind: "travel_ended", actor: "chapter" });
+    const s = chapter.snapshot();
+    expect(s.scene).toBe("underpass");
+    expect(s.phase).toBe("resolved");
+    expect(s.ending).toBeNull();
+    expect(s.exits.length).toBeGreaterThan(0);
+    expect(chapter.input({ kind: "move_to", actor: "player", place: "road" }).ok).toBe(true);
     expect(chapter.snapshot().scene).toBe("pharmacy");
   });
 });
@@ -306,5 +397,64 @@ describe("Chapter: invariants", () => {
     chapter.input({ kind: "look", actor: "wren", direction: "up" });
     chapter.input({ kind: "listen", actor: "wren" });
     expect(seen).toEqual([1, 1]);
+  });
+});
+
+describe("Chapter: legibility", () => {
+  it("opens with a prologue that says who you are and what you need, then the scene, then Wren", () => {
+    const { chapter } = fresh();
+    const d = chapter.snapshot().dialogue;
+    expect(d[0].speaker).toBe("narrator");
+    expect(d[0].text).toMatch(/Wren pulled you out/);
+    expect(d.some((l) => /antibiotics/.test(l.text))).toBe(true);
+    expect(d[d.length - 1].speaker).toBe("wren");
+    expect(chapter.snapshot().goal).toMatch(/voice/);
+  });
+
+  it("speaks Wren's authored lines only while no agent is playing her", () => {
+    const scripted = new Chapter();
+    scripted.input({ kind: "begin", actor: "player" });
+    scripted.input({ kind: "decide", actor: "player", choice: "answer" });
+    expect(scripted.snapshot().dialogue.filter((l) => l.speaker === "wren").length).toBeGreaterThanOrEqual(2);
+
+    const agent = new Chapter({ companion: "agent" });
+    agent.input({ kind: "begin", actor: "player" });
+    agent.input({ kind: "decide", actor: "player", choice: "answer" });
+    expect(agent.snapshot().dialogue.filter((l) => l.speaker === "wren")).toHaveLength(0);
+    expect(agent.snapshot().dialogue.some((l) => l.text === "Wren saw that.")).toBe(true);
+
+    const scriptedStay = new Chapter();
+    scriptedStay.input({ kind: "begin", actor: "player" });
+    scriptedStay.input({ kind: "decide", actor: "player", choice: "stay_silent" });
+    expect(scriptedStay.snapshot().dialogue.some((l) => l.text === "Wren saw that.")).toBe(false);
+  });
+
+  it("explains a wound, a trust change, and a decided moment in plain words", () => {
+    const { chapter } = fresh();
+    chapter.input({ kind: "decide", actor: "player", choice: "send_wren" });
+    const status = chapter.snapshot().dialogue.filter((l) => l.speaker === "chapter").map((l) => l.text);
+    expect(status.some((t) => /Wren is hurt/.test(t))).toBe(true);
+    expect(status.some((t) => /Trust fell to 2 of 6/.test(t) && /Below 3/.test(t))).toBe(true);
+    expect(status.some((t) => /decided/.test(t))).toBe(true);
+  });
+
+  it("counts moments left aloud while the situation is still open", () => {
+    const { chapter } = fresh();
+    chapter.input({ kind: "look", actor: "wren", direction: "up" });
+    const last = chapter.snapshot().dialogue.at(-1)!;
+    expect(last.speaker).toBe("chapter");
+    expect(last.text).toMatch(/2 moments left/);
+  });
+
+  it("tells an agent which tools it lost, but not a cards-only player", () => {
+    const agent = new Chapter({ companion: "agent" });
+    agent.input({ kind: "begin", actor: "player" });
+    agent.input({ kind: "decide", actor: "player", choice: "send_wren" });
+    expect(agent.snapshot().dialogue.some((l) => l.speaker === "chapter" && /no longer: .*run/.test(l.text))).toBe(true);
+
+    const scripted = new Chapter();
+    scripted.input({ kind: "begin", actor: "player" });
+    scripted.input({ kind: "decide", actor: "player", choice: "send_wren" });
+    expect(scripted.snapshot().dialogue.some((l) => /no longer:/.test(l.text))).toBe(false);
   });
 });

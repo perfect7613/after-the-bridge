@@ -1,10 +1,12 @@
 import { capabilitiesFor } from "./capabilities";
-import { SCENES, TRUST_START, TRUST_THRESHOLD, type LookResponse, type SceneData } from "./scenes";
+import { PROLOGUE, SCENES, TRUST_START, TRUST_THRESHOLD, type LookResponse, type SceneData } from "./scenes";
 import type {
   Actor,
+  CapabilityName,
   ChapterInput,
   ChapterResult,
   Choice,
+  Companion,
   DialogueLine,
   Elicitation,
   Ending,
@@ -37,16 +39,35 @@ interface State {
   narration: string;
   steer: Steer;
   ending: Ending | null;
+  begun: boolean;
+  waitingOnWren: boolean;
+  waitingSince: number;
+  lastWrenActAt: number;
   lastWrites: number[];
 }
 
 export interface ChapterOptions {
   now?: () => number;
   startScene?: SceneId;
+  /** Who voices Wren. Defaults to authored lines; switch to "agent" once a WebMCP agent is attached. */
+  companion?: Companion;
 }
 
 type Listener = (snapshot: Snapshot) => void;
 
+/** The parts of state a player needs explained when they change. */
+interface Probe {
+  scene: SceneId;
+  phase: State["phase"];
+  wounded: boolean;
+  trust: number;
+  beatsLeft: number;
+  capabilities: CapabilityName[];
+  playerInventory: Item[];
+}
+
+export const WREN_SETTLE_MS = 3_000;
+export const WREN_TURN_MS = 8_000;
 const WREN_CROSSED = "wren_across";
 const PLAYER_CROSSED = "player_across";
 const CABINET_OPEN = "cabinet_open";
@@ -58,9 +79,11 @@ export class Chapter {
   private readonly listeners = new Set<Listener>();
   private readonly answerWaiters = new Map<number, Array<(answer: string) => void>>();
   private nextId = 1;
+  private companion: Companion;
 
   constructor(opts: ChapterOptions = {}) {
     this.now = opts.now ?? (() => Date.now());
+    this.companion = opts.companion ?? "scripted";
     const scene = SCENES[opts.startScene ?? "underpass"];
     this.s = {
       scene: scene.id,
@@ -80,9 +103,15 @@ export class Chapter {
       narration: "",
       steer: { seq: 0, instruction: scene.openingSteer, mood: scene.mood },
       ending: null,
+      begun: false,
+      waitingOnWren: false,
+      waitingSince: 0,
+      lastWrenActAt: 0,
       lastWrites: [],
     };
+    if (scene.id === "underpass") for (const line of PROLOGUE) this.narrate(line);
     this.narrate(scene.opening);
+    this.wrenSays("enter");
     this.write("chapter", "scene", `We sheltered under the ${scene.title.replace("The ", "").toLowerCase()}.`);
     this.s.lastWrites = [];
   }
@@ -92,6 +121,17 @@ export class Chapter {
     return () => this.listeners.delete(fn);
   }
 
+  /**
+   * Hand Wren's voice to an agent (or take it back). With an agent attached the
+   * Chapter stops speaking her authored lines so the two never talk over each other.
+   */
+  setCompanion(companion: Companion) {
+    if (this.companion === companion) return;
+    this.companion = companion;
+    if (companion === "scripted") this.clearWrenTurn();
+    this.emit();
+  }
+
   snapshot(): Snapshot {
     const scene = SCENES[this.s.scene];
     const choices = this.choices();
@@ -99,6 +139,7 @@ export class Chapter {
       scene: this.s.scene,
       sceneTitle: scene.title,
       sceneSubtitle: scene.subtitle,
+      goal: scene.goal,
       phase: this.s.phase,
       beat: this.s.beat,
       beatsLeft: this.s.beatsLeft,
@@ -112,11 +153,13 @@ export class Chapter {
       capabilities: capabilitiesFor({
         scene: this.s.scene,
         phase: this.s.phase,
+        begun: this.s.begun,
+        waitingOnWren: this.s.waitingOnWren,
         wounded: this.s.wounded,
         trust: this.s.trust,
         wrenInventory: this.s.wrenInventory,
         playerInventory: this.s.playerInventory,
-        wrenChoices: choices.filter((c) => !c.playerOnly),
+        wrenChoices: choices.filter((c) => c.wrenOnly),
         exitCount: scene.exits.length,
       }),
       pending: this.s.pending ? { ...this.s.pending } : null,
@@ -125,6 +168,8 @@ export class Chapter {
       narration: this.s.narration,
       steer: { ...this.s.steer },
       ending: this.s.ending,
+      begun: this.s.begun,
+      waitingOnWren: this.s.waitingOnWren,
       lastWrites: [...this.s.lastWrites],
     };
   }
@@ -153,7 +198,25 @@ export class Chapter {
 
   input(i: ChapterInput): ChapterResult {
     this.s.lastWrites = [];
+    const before = this.probe();
     const result = this.dispatch(i);
+    this.explain(before);
+    if (this.companion === "agent" && i.actor === "player" && result.ok) {
+      if (i.kind === "decide" || i.kind === "move_to" || i.kind === "answer") {
+        this.startWrenTurn();
+        this.s.dialogue.push({ id: this.nextId++, speaker: "chapter", text: "Wren saw that." });
+      } else if (i.kind === "begin") {
+        this.s.dialogue.push({ id: this.nextId++, speaker: "chapter", text: "Wren saw that." });
+      }
+    }
+    if (
+      this.s.waitingOnWren &&
+      i.actor === "wren" &&
+      isWrenFloorAction(i.kind) &&
+      (result.ok || result.refused)
+    ) {
+      this.s.lastWrenActAt = this.now();
+    }
     this.emit();
     return result;
   }
@@ -164,7 +227,27 @@ export class Chapter {
     if (this.s.ending && i.kind !== "recall" && i.kind !== "scene_state" && i.kind !== "say") {
       return this.fail("The chapter is over.");
     }
+    if (
+      !this.s.begun &&
+      i.kind !== "begin" &&
+      i.kind !== "scene_state" &&
+      i.kind !== "recall" &&
+      i.kind !== "say"
+    ) {
+      return this.fail("The page is still on Begin. Call begin first — that is the button on the title card.");
+    }
+    if (
+      this.s.waitingOnWren &&
+      i.actor === "player" &&
+      (i.kind === "decide" || i.kind === "move_to")
+    ) {
+      return this.fail("Wren is still answering. Wait until she is done.");
+    }
     switch (i.kind) {
+      case "begin":
+        return this.beginChapter();
+      case "ready":
+        return this.ready();
       case "scene_state":
         return this.ok(this.describeScene());
       case "recall":
@@ -195,11 +278,59 @@ export class Chapter {
       case "follow_my_lead":
         return this.followMyLead();
       case "move_to":
-        return this.moveTo(i.place);
+        return this.moveTo(i.place, i.actor);
       case "decide":
         return this.decide(i.choice, i.actor);
       case "travel_ended":
         return this.lightGoes();
+    }
+  }
+
+  // --- title card -------------------------------------------------------------
+
+  private beginChapter(): ChapterResult {
+    if (this.s.begun) return this.fail("Already begun.");
+    this.s.begun = true;
+    return this.ok("The world is live. The player has the cards. Wait for their first move, then react.");
+  }
+
+  private ready(): ChapterResult {
+    if (!this.s.waitingOnWren) return this.ok("The player already has the cards.");
+    this.clearWrenTurn();
+    return this.ok("The player may choose again.");
+  }
+
+  /** After a player move, Wren has the floor until she finishes acting. */
+  private startWrenTurn() {
+    this.s.waitingOnWren = true;
+    this.s.waitingSince = this.now();
+    this.s.lastWrenActAt = 0;
+  }
+
+  private clearWrenTurn() {
+    this.s.waitingOnWren = false;
+    this.s.waitingSince = 0;
+    this.s.lastWrenActAt = 0;
+  }
+
+  /**
+   * Unlock the player's cards once Wren has gone idle, or if she never acted.
+   * Game polls this while waitingOnWren. Tests call it after advancing `now`.
+   */
+  releaseIfIdle(busy: boolean) {
+    if (!this.s.waitingOnWren) return;
+    const t = this.now();
+    // Always release after the turn clock, even if a tool execute is stuck.
+    if (t - this.s.waitingSince >= WREN_TURN_MS) {
+      this.clearWrenTurn();
+      this.emit();
+      return;
+    }
+    if (busy) return;
+    const acted = this.s.lastWrenActAt > 0;
+    if (acted && t - this.s.lastWrenActAt >= WREN_SETTLE_MS) {
+      this.clearWrenTurn();
+      this.emit();
     }
   }
 
@@ -208,27 +339,34 @@ export class Chapter {
   private look(direction: string, actor: Actor): ChapterResult {
     const scene = SCENES[this.s.scene];
     const response = pickLook(scene, direction);
+
+    if (response.wounds && actor === "wren" && !this.s.wounded) {
+      this.spendBeat();
+      const text = "I can see the shape of him past the light. I am not going out there unless you send me.";
+      this.write("wren", "look", text);
+      if (this.s.beatsLeft === 0 && this.s.phase === "situation") {
+        this.narrate(text + " " + this.momentPasses());
+        return this.ok(this.s.narration);
+      }
+      this.narrate(text);
+      return this.ok(text);
+    }
+
     this.spendBeat();
     this.steer(response.steer);
 
     let narration = response.text;
     if (response.wounds && !this.s.wounded) {
       this.s.wounded = true;
-      if (actor === "player") {
-        this.write("player", "wound", "You sent me out past the light. I went. I came back on one leg.", {
-          feeling: "I did not say anything about it. I am still not saying anything about it.",
-          trustDelta: -1,
-          irreversible: true,
-        });
-      } else {
-        this.write("wren", "wound", "I went out past the light to see. My choice. I came back on one leg.", {
-          feeling: "It was the right call. It still hurts.",
-          irreversible: true,
-        });
-      }
+      this.write("player", "wound", "You sent me out past the light. I went. I came back on one leg.", {
+        feeling: "I did not say anything about it. I am still not saying anything about it.",
+        trustDelta: -1,
+        irreversible: true,
+      });
       this.s.flags.add("looked_voice");
       this.s.present = ["you", "wren"];
       if (this.s.phase === "situation") this.resolve();
+      this.wrenSays("wounded");
     } else {
       this.write("wren", "look", `I looked ${direction.trim() || "around"}. ${shorten(response.text)}`);
     }
@@ -295,36 +433,24 @@ export class Chapter {
   // --- body -------------------------------------------------------------------
 
   private hide(): ChapterResult {
+    if (this.s.phase === "situation") {
+      return this.fail("The player decides this moment. It is on the cards. Wait, then react.");
+    }
     const scene = SCENES[this.s.scene];
     this.s.wrenHidden = true;
     this.steer(scene.hide.steer);
-    if (this.s.scene === "underpass" && this.s.phase === "situation") {
-      this.write("wren", "choice", "I pulled us back out of the light and we let the voice go quiet.", {
-        feeling: "Not proud of it. Alive, though.",
-      });
-      this.s.present = ["you", "wren"];
-      this.resolve();
-    }
     this.narrate(scene.hide.text);
     return this.ok(scene.hide.text);
   }
 
   private run(): ChapterResult {
     if (this.s.wounded) return this.fail("Wren cannot run on that leg.");
+    if (this.s.scene === "bridge" && this.s.flags.has(PLAYER_CROSSED)) return this.decide("follow", "wren");
+    if (this.s.phase === "situation") {
+      return this.fail("The player decides this moment. It is on the cards. Wait, then react.");
+    }
     const scene = SCENES[this.s.scene];
     this.steer(scene.run.steer);
-    if (this.s.scene === "bridge") {
-      if (this.s.flags.has(PLAYER_CROSSED)) return this.decide("follow", "wren");
-      this.s.flags.add(WREN_CROSSED);
-      this.write("wren", "choice", "I ran the span first and waited for you on the far side.", { irreversible: true });
-      this.narrate(scene.run.text);
-      return this.ok(scene.run.text);
-    }
-    if (this.s.phase === "situation") {
-      this.write("wren", "choice", "We ran. We did not find out what was out there.", { irreversible: true });
-      this.s.present = ["you", "wren"];
-      this.resolve();
-    }
     this.narrate(scene.run.text);
     return this.ok(scene.run.text);
   }
@@ -353,6 +479,7 @@ export class Chapter {
     this.s.present = ["you", "wren", "footsteps in the back room"];
     this.resolve();
     this.narrate(text);
+    this.wrenSays("opened");
     return this.ok(text);
   }
 
@@ -377,6 +504,9 @@ export class Chapter {
         text = this.s.wounded
           ? `You take the ${item}. Wren lets you, because she cannot do much else on that leg. She does not look at you.`
           : `You take the ${item}. Wren lets go a half-second late.`;
+        this.narrate(text);
+        if (item === "crowbar") this.wrenSays(this.s.wounded ? "crowbar_taken_wounded" : "crowbar_taken");
+        return this.ok(text);
       } else {
         this.write("wren", "item", `I handed you the ${item}.`);
         text = `Wren holds out the ${item}. You take it.`;
@@ -410,7 +540,8 @@ export class Chapter {
 
   // --- story ------------------------------------------------------------------
 
-  private moveTo(place: string): ChapterResult {
+  private moveTo(place: string, actor: Actor): ChapterResult {
+    if (actor === "wren") return this.fail("The player picks the way on. It is on the cards.");
     if (this.s.phase !== "resolved") return this.fail("Not yet. The moment here is not finished.");
     const scene = SCENES[this.s.scene];
     const p = place.trim().toLowerCase();
@@ -431,8 +562,10 @@ export class Chapter {
     const id = choiceId.trim().toLowerCase().replace(/[\s-]+/g, "_");
     const choice = this.choices().find((c) => c.id === id || c.label.toLowerCase() === choiceId.trim().toLowerCase());
     if (!choice) return this.fail(`No choice called "${choiceId}". Choices: ${this.choices().map((c) => c.id).join(", ")}.`);
-    if (choice.playerOnly && actor === "wren") return this.fail(`Only the player can choose "${choice.id}".`);
     if (choice.wrenOnly && actor === "player") return this.fail(`Only Wren can choose "${choice.id}".`);
+    if (!choice.wrenOnly && actor === "wren") {
+      return this.fail("That choice is the player's. It is on the cards. Wait for them, then react.");
+    }
 
     switch (this.s.scene) {
       case "underpass":
@@ -458,6 +591,7 @@ export class Chapter {
         const text =
           "You call out. The voice stops. Then footsteps in the water, uneven. A man comes to the edge of the light with his hands up and one leg wrong under him. He says thank you twice. Behind him, further out, something else stops moving to listen.";
         this.narrate(text);
+        if (actor === "player") this.wrenSays("answer");
         return this.ok(text);
       }
       case "stay_silent": {
@@ -472,6 +606,7 @@ export class Chapter {
         const text =
           "You say nothing. Wren says nothing. The voice calls three more times, each one further away or weaker, you cannot tell which. Then it does not.";
         this.narrate(text);
+        if (actor === "player") this.wrenSays("stay_silent");
         return this.ok(text);
       }
       case "send_wren":
@@ -515,6 +650,7 @@ export class Chapter {
         this.resolve();
         const text = "You leave it. The cabinet stays shut behind you. Your arm has its own pulse now.";
         this.narrate(text);
+        if (actor === "player") this.wrenSays("leave_it");
         return this.ok(text);
       }
     }
@@ -529,6 +665,7 @@ export class Chapter {
         const text = "You wait. The wind does not drop. The engines behind you get closer instead.";
         if (this.s.beatsLeft === 0) return this.lightGoes();
         this.narrate(text);
+        this.wrenSays("wait");
         return this.ok(text);
       }
       case "cross_first": {
@@ -538,6 +675,7 @@ export class Chapter {
         }
         this.s.flags.add(WREN_CROSSED);
         this.steer("One survivor walks out onto the sagging bridge deck, slowly, and reaches the far side.");
+        this.wrenSays("cross_first");
         this.write(actor, "choice", actor === "player" ? "You asked me to go first. I went." : "I went first.", {
           feeling: "I could feel you watching the whole way.",
           irreversible: true,
@@ -554,6 +692,7 @@ export class Chapter {
         this.s.flags.add(PLAYER_CROSSED);
         this.steer("One survivor walks out onto the sagging bridge deck while the other stays behind, watching.");
         this.write("player", "choice", "You went first.", { irreversible: true });
+        this.wrenSays(this.s.flags.has(COMMITTED) || this.s.trust >= TRUST_THRESHOLD ? "you_first" : "you_first_low");
         if (this.s.flags.has(COMMITTED)) {
           this.narrate("You cross. The deck moves. You do not look back until the far side, and when you do, Wren is already on the span.");
           return this.end("together");
@@ -571,6 +710,7 @@ export class Chapter {
           return { ...result, snapshot: this.snapshot() };
         }
         this.write("wren", "choice", "I followed you across.", { feeling: "I did not have to think about it.", irreversible: true });
+        this.wrenSays("follow");
         return this.end("together");
       }
       case "stay": {
@@ -588,6 +728,7 @@ export class Chapter {
     this.s.ending = ending;
     this.s.phase = "ended";
     this.s.pending = null;
+    this.clearWrenTurn();
     this.s.steer = { seq: this.s.steer.seq + 1, instruction: "", mood: "black" };
     const text =
       ending === "together"
@@ -606,13 +747,15 @@ export class Chapter {
     this.s.pending = null;
     if (this.s.scene === "bridge") {
       this.narrate(scene.lightGoes);
+      this.wrenSays("light_goes");
       this.write("chapter", "scene", "The light went before either of us moved.", { irreversible: true });
       return this.end("alone");
     }
-    this.write("chapter", "scene", "The light went. We left.", { irreversible: true });
+    this.resolve();
+    this.write("chapter", "scene", "The light went.", { irreversible: true });
     this.narrate(scene.lightGoes);
-    const exit = scene.exits[0];
-    return this.takeExit(exit);
+    this.wrenSays("light_goes");
+    return this.ok(scene.lightGoes);
   }
 
   // --- helpers ----------------------------------------------------------------
@@ -635,7 +778,7 @@ export class Chapter {
           list.push({
             id: "give_back",
             label: "Give the crowbar back to Wren",
-            hint: "Return the crowbar. This is the same as Wren using take.",
+            hint: "Hand it back to her. It does not undo taking it.",
             playerOnly: true,
           });
         list.push(scene.choices.find((c) => c.id === "leave_it")!);
@@ -647,7 +790,7 @@ export class Chapter {
         }
         if (f.has(PLAYER_CROSSED)) {
           return [
-            { id: "follow", label: "Call Wren across", hint: "Wren crosses after the player. She may refuse." },
+            { id: "follow", label: "Follow", hint: "Wren crosses after the player. She may refuse.", wrenOnly: true },
             { id: "stay", label: "Stay", hint: "Wren stays on this side.", wrenOnly: true },
           ];
         }
@@ -666,6 +809,74 @@ export class Chapter {
     this.s.pending = null;
     this.s.steer = { seq: this.s.steer.seq + 1, instruction: scene.openingSteer, mood: scene.mood };
     this.narrate(this.s.wounded && scene.openingWounded ? scene.openingWounded : scene.opening);
+    this.wrenSays(this.s.wounded && scene.wren.enter_wounded ? "enter_wounded" : "enter");
+  }
+
+  /** Wren's authored line for a story event. Silent when an agent is voicing her. */
+  private wrenSays(key: string) {
+    if (this.companion !== "scripted") return;
+    const line = SCENES[this.s.scene].wren[key];
+    if (!line) return;
+    this.s.dialogue.push({ id: this.nextId++, speaker: "wren", text: line });
+  }
+
+  private probe(): Probe {
+    return {
+      scene: this.s.scene,
+      phase: this.s.phase,
+      wounded: this.s.wounded,
+      trust: this.s.trust,
+      beatsLeft: this.s.beatsLeft,
+      capabilities: this.snapshot().capabilities,
+      playerInventory: [...this.s.playerInventory],
+    };
+  }
+
+  /**
+   * After every input, say in plain words what just changed for the player:
+   * trust, the wound, what Wren can still do, and whether the moment is decided.
+   * Scene changes are explained by the scene card instead.
+   */
+  private explain(before: Probe) {
+    const after = this.probe();
+    if (after.scene !== before.scene || this.s.ending) return;
+    const lines: string[] = [];
+
+    if (!before.wounded && after.wounded) {
+      lines.push("Wren is hurt. She cannot run anymore, for the rest of the story.");
+    }
+    if (after.playerInventory.includes("antibiotics") && !before.playerInventory.includes("antibiotics")) {
+      lines.push("You have the antibiotics. Your arm will hold.");
+    }
+    if (after.trust !== before.trust) {
+      const dir = after.trust > before.trust ? "rose" : "fell";
+      let line = `Trust ${dir} to ${after.trust} of 6.`;
+      if (before.trust >= TRUST_THRESHOLD && after.trust < TRUST_THRESHOLD) {
+        line += " Below 3, Wren stops doing things on your word alone.";
+      } else if (before.trust < TRUST_THRESHOLD && after.trust >= TRUST_THRESHOLD) {
+        line += " At 3 or more, Wren will follow your lead again.";
+      }
+      lines.push(line);
+    }
+    if (this.companion === "agent") {
+      const lost = before.capabilities.filter((c) => !after.capabilities.includes(c));
+      const gained = after.capabilities.filter((c) => !before.capabilities.includes(c));
+      // Begin swapping the title-card tools for the body is not a story event.
+      if (!lost.includes("begin")) {
+        if (lost.length) lines.push(`Wren can no longer: ${lost.join(", ")}.`);
+        if (gained.length) lines.push(`Wren can now: ${gained.join(", ")}.`);
+      }
+    }
+    if (before.phase === "situation" && after.phase === "resolved") {
+      const exits = SCENES[after.scene].exits;
+      lines.push(exits.length ? "This moment is decided. Choose a way on." : "This moment is decided.");
+    } else if (after.phase === "situation" && after.beatsLeft < before.beatsLeft && after.beatsLeft > 0) {
+      lines.push(
+        `${after.beatsLeft} ${after.beatsLeft === 1 ? "moment" : "moments"} left before this passes without you.`,
+      );
+    }
+
+    for (const text of lines) this.s.dialogue.push({ id: this.nextId++, speaker: "chapter", text });
   }
 
   private resolve() {
@@ -740,10 +951,19 @@ export class Chapter {
       `Trust: ${snap.trust} of 6 (threshold ${snap.trustThreshold}).`,
       `Beats left before the moment passes: ${snap.beatsLeft}.`,
     ];
-    const wrenChoices = snap.choices.filter((c) => !c.playerOnly);
+    if (!snap.begun) {
+      lines.push("The page is still on the title card. Call begin — that is the same as the Begin button. Then wait for the player's first card.");
+    } else if (snap.waitingOnWren) {
+      lines.push("The player's next cards are hidden. Finish looking and speaking, then call ready so they can choose again.");
+    } else {
+      lines.push("The player decides with the cards on the page. Do not take those choices. After they move, react.");
+    }
+    const wrenChoices = snap.choices.filter((c) => c.wrenOnly);
     if (wrenChoices.length) lines.push(`Decisions Wren can make: ${wrenChoices.map((c) => `${c.id} (${c.hint})`).join("; ")}.`);
-    const playerChoices = snap.choices.filter((c) => c.playerOnly);
-    if (playerChoices.length) lines.push(`Cards only the player can click: ${playerChoices.map((c) => c.id).join(", ")}.`);
+    const playerChoices = snap.choices.filter((c) => !c.wrenOnly);
+    if (playerChoices.length) {
+      lines.push(`The player's cards right now: ${playerChoices.map((c) => `${c.id} (${c.hint})`).join("; ")}.`);
+    }
     if (snap.exits.length) lines.push(`Exits: ${snap.exits.map((e) => `${e.id} (${e.label})`).join("; ")}.`);
     if (snap.pending) lines.push(`Waiting on the player: "${snap.pending.question}"`);
     if (snap.ending) lines.push(`Ending: ${snap.ending}.`);
@@ -775,6 +995,24 @@ export class Chapter {
     const snap = this.snapshot();
     for (const l of this.listeners) l(snap);
   }
+}
+
+const WREN_FLOOR = new Set<ChapterInput["kind"]>([
+  "look",
+  "listen",
+  "say",
+  "ask",
+  "hide",
+  "run",
+  "open",
+  "give",
+  "take",
+  "follow_my_lead",
+  "decide",
+]);
+
+function isWrenFloorAction(kind: ChapterInput["kind"]): boolean {
+  return WREN_FLOOR.has(kind);
 }
 
 function pickLook(scene: SceneData, direction: string): LookResponse {

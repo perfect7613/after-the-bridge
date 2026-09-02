@@ -6,6 +6,10 @@ export const dynamic = "force-dynamic";
 
 const DIRECTING_MODEL = "reactor/happy-oyster-director";
 const TOKEN_URL = "https://api.reactor.inc/tokens";
+/** Short-lived; the client resolver re-mints before expiry. */
+const TOKEN_LIFETIME_SECONDS = 30 * 60;
+/** One live session plus headroom for a React remount and one recoverable reconnect. */
+const MAX_SESSIONS = 3;
 
 function worldIds(): Partial<Record<SceneId, string>> {
   const raw = process.env.REACTOR_WORLD_IDS;
@@ -36,11 +40,12 @@ export async function POST() {
     cache: "no-store",
     headers: { "Reactor-API-Key": key, "Content-Type": "application/json" },
     body: JSON.stringify({
+      expires_after: TOKEN_LIFETIME_SECONDS,
       authorization_details: [
         {
           type: "session",
           resources: { models: { match: [DIRECTING_MODEL] } },
-          constraints: { max_sessions: 1 },
+          constraints: { max_sessions: MAX_SESSIONS },
         },
       ],
     }),

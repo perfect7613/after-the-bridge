@@ -1,5 +1,6 @@
 export { Wren } from "./wren";
 export type { Activity, ActivityKind, WrenState } from "./wren";
+export { getSession, WrenSession } from "./session";
 export { ToolRegistry } from "./registry";
 export type { ModelContextLike, RegistryEvent, ToolSpec } from "./registry";
 export { toolsFor, toResult } from "./tools";

@@ -2,7 +2,6 @@
 
 export interface ToolSpec {
   name: string;
-  title?: string;
   description: string;
   inputSchema?: object;
   annotations?: { readOnlyHint?: boolean; untrustedContentHint?: boolean };
@@ -68,15 +67,22 @@ export class ToolRegistry {
     for (const spec of desired) {
       if (this.held.has(spec.name)) continue;
       const controller = new AbortController();
+      const schema = cloneSchema(spec.inputSchema ?? EMPTY_INPUT);
       try {
         await this.ctx.registerTool(
           {
             name: spec.name,
-            title: spec.title,
+            title: spec.name,
             description: spec.description,
-            inputSchema: spec.inputSchema ?? { type: "object", properties: {} },
+            inputSchema: schema,
             annotations: spec.annotations,
-            execute: spec.execute as WebMCP.ToolExecuteCallback,
+            // WebIDL: ToolExecuteCallback = Promise<any> (object input)
+            execute: async (input, extra) => {
+              const result = await spec.execute((input ?? {}) as Record<string, unknown>, {
+                signal: extra?.signal ?? controller.signal,
+              });
+              return cloneResult(result);
+            },
           },
           { signal: controller.signal },
         );
@@ -102,4 +108,20 @@ export class ToolRegistry {
 
 function keyOf(spec: ToolSpec): string {
   return spec.name + "|" + JSON.stringify(spec.inputSchema ?? null) + "|" + spec.description;
+}
+
+/** ChatGPT's documented no-arg schema. Anything looser is registered but not callable. */
+const EMPTY_INPUT = { type: "object", properties: {}, additionalProperties: false };
+
+function cloneSchema(schema: object): object {
+  return JSON.parse(JSON.stringify(schema)) as object;
+}
+
+function cloneResult(result: unknown): unknown {
+  if (result === undefined || result === null) return { ok: true };
+  try {
+    return JSON.parse(JSON.stringify(result));
+  } catch {
+    return { ok: true, narration: String(result) };
+  }
 }

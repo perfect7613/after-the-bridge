@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Origin-Agent-Cluster", "value": "?1" },
+        { "key": "Permissions-Policy", "value": "tools=(self)" }
+      ]
+    }
+  ]
+}

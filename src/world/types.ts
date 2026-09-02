@@ -26,4 +26,6 @@ export interface WorldProps {
   /** The Travel for this scene is over. The Chapter decides what that means. */
   onEnded: (scene: SceneId) => void;
   onStatus: (status: WorldStatus, detail?: string) => void;
+  /** True while a steer is still being applied to the live world model. */
+  onSteering?: (busy: boolean) => void;
 }

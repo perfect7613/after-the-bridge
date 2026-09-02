@@ -22,17 +22,17 @@ That single idea drives everything:
 
 The world is generated live, one scene at a time, by a Reactor Directing world model. There is no pre-recorded footage. Every scene is a three-minute live travel, and the countdown in the corner is the stream's remaining time. When the light goes, the scene ends.
 
-Three scenes, two endings, about eight minutes. Playable alone with cards, or with Wren through Codex. Cards and tools are the same input.
+Three scenes, two endings, about eight minutes. Playable alone with cards, or with Wren through Codex. You take the cards. Wren answers with tools.
 
 ## Play it
 
-**Live:** _URL added after deploy._
+**Live:** [after-the-bridge.vercel.app](https://after-the-bridge.vercel.app)
 
 **With Wren (recommended):**
 
 1. Open the ChatGPT desktop app and start a Codex session with the in-app browser.
 2. Load the live URL. Site tools appear in the composer as soon as the page loads.
-3. Click **Copy opening prompt** on the title card, paste it to Codex, and press **Begin**.
+3. Click **Copy opening prompt** on the title card and paste it to Codex. Either of you can press **Begin** — Wren has a `begin` tool that is the same button.
 4. Talk to Wren. Watch the Site tools popover change as things happen to her. Open **Ledger** at any time to see what she remembers and what she can currently do.
 
 **Without Wren:** press **Begin** and play the cards. Same story, same consequences.
@@ -50,23 +50,25 @@ The [WebMCP explainer](https://github.com/webmachinelearning/webmcp) describes a
 - **Blocking `execute` is a dramatic device.** `ask_player` waits on the page's UI and honours the agent's `AbortSignal`. Timeout resolves to `"silence"`, which the ledger records and which costs trust.
 - **The page owns what the agent cannot see.** The live travel is a `<video>` over WebRTC. Wren's `look` returns authored text and spends a beat.
 - **`execute` has standing.** `decide` may return `{ refused: true, reason, citation }`. There is no `refuse` tool; refusal is an outcome computed from the ledger.
-- **One code path.** Every `execute` handler is a single call into the Chapter. Choice cards call the same function. No rule is duplicated for the agent.
+- **You choose, she reacts.** Choice cards are the player's. Site tools are Wren's body. She cannot take a card; after you click, she looks, speaks, asks, or — at the bridge — decides whether to follow.
+- **One code path.** Every `execute` handler is a single call into the Chapter. No story rule is duplicated for the agent.
 - **Chrome's tool guidance, followed.** One function per tool, verbs that say what happens, positive descriptions, validation in code, `readOnlyHint` on perception tools. Wren's persona lives in the prompt the player pastes, never in the tool text.
 
 ### Wren's tools
 
 | Tool | Read-only | Registered when |
 |---|---|---|
+| `begin` | | title card only — same as the Begin button |
+| `ready` | | from the title card onward — hands the cards back after Wren reacts |
 | `get_scene_state` | yes | always |
 | `recall` | yes | always |
 | `listen` | yes | until the chapter ends |
 | `look` | no (costs a beat) | until the chapter ends |
 | `say` | | always |
 | `ask_player` | | until the chapter ends |
-| `decide` | | a situation is open |
-| `move_to` | | the situation is resolved and exits exist |
-| `hide` | | until the chapter ends |
-| `run` | | Wren is not wounded |
+| `decide` | | only after the player has crossed the bridge: follow, or stay |
+| `hide` | | until the chapter ends; cannot resolve a scene the player still owns |
+| `run` | | Wren is not wounded; cannot take the player's crossing |
 | `open` | | Wren holds the crowbar and something here is locked |
 | `give` | | Wren is carrying something |
 | `take` | | the player is carrying something |
@@ -82,7 +84,7 @@ flowchart LR
     Chat["Chat pane<br/>player talks to Wren"]
     subgraph page["In-app browser · after-the-bridge (top-level document)"]
       Wren["<b>Wren</b><br/>src/wren<br/>ToolRegistry.sync(capabilities)<br/>register / abort per tool<br/>execute → Chapter.input"]
-      Chapter["<b>Chapter</b><br/>src/chapter<br/>scenes · beats · ledger · trust<br/>elicitation · capabilities<br/>pure TypeScript, 28 tests"]
+      Chapter["<b>Chapter</b><br/>src/chapter<br/>scenes · beats · ledger · trust<br/>elicitation · capabilities<br/>pure TypeScript, 53 tests"]
       Chrome["<b>Chrome</b><br/>src/chrome<br/>cards · dialogue · countdown<br/>ledger panel · toasts"]
       World["<b>World</b><br/>src/world<br/>placeholder | happy-oyster<br/>enter scene · steer · clock"]
       Voice["<b>Voice</b><br/>src/voice<br/>silent | sarvam<br/>speak(speaker, text, tone)"]

@@ -16,7 +16,7 @@ const GRADIENTS: Record<string, string> = {
  * per-scene clock the live adapter does, so the Chapter behaves identically.
  */
 export function PlaceholderWorld({ scene, mood, steer, active, onClock, onEnded, onStatus }: WorldProps) {
-  const endedFor = useRef<string | null>(null);
+  const spentFor = useRef<string | null>(null);
 
   useEffect(() => {
     onStatus("placeholder");
@@ -27,15 +27,20 @@ export function PlaceholderWorld({ scene, mood, steer, active, onClock, onEnded,
       onClock(null);
       return;
     }
-    endedFor.current = null;
+    if (spentFor.current === scene) {
+      onClock(null);
+      return;
+    }
+    spentFor.current = null;
     onClock(TRAVEL_SECONDS);
     const started = Date.now();
     const id = setInterval(() => {
       const left = Math.max(0, TRAVEL_SECONDS - Math.floor((Date.now() - started) / 1000));
       onClock(left);
-      if (left === 0 && endedFor.current !== scene) {
-        endedFor.current = scene;
+      if (left === 0) {
+        spentFor.current = scene;
         clearInterval(id);
+        onClock(null);
         onEnded(scene);
       }
     }, 250);

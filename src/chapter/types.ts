@@ -10,10 +10,15 @@ export type Item = "crowbar" | "antibiotics";
 
 export type Ending = "together" | "alone";
 
-export type Speaker = "wren" | "stranger" | "narrator";
+/** `chapter` lines are plain-language status ("Wren is wounded. She can no longer run."), never voiced. */
+export type Speaker = "wren" | "stranger" | "narrator" | "chapter";
+
+/** Who plays Wren's voice in the dialogue: authored lines, or an agent through the tools. */
+export type Companion = "scripted" | "agent";
 
 /** Every WebMCP tool Wren can wear. Presence in a snapshot is the state. */
 export type CapabilityName =
+  | "begin"
   | "look"
   | "listen"
   | "recall"
@@ -27,7 +32,8 @@ export type CapabilityName =
   | "say"
   | "ask_player"
   | "follow_my_lead"
-  | "decide";
+  | "decide"
+  | "ready";
 
 export type LedgerKind =
   | "choice"
@@ -99,6 +105,8 @@ export interface Snapshot {
   scene: SceneId;
   sceneTitle: string;
   sceneSubtitle: string;
+  /** What the player needs here, in one plain sentence. */
+  goal: string;
   phase: "situation" | "resolved" | "ended";
   beat: number;
   beatsLeft: number;
@@ -116,11 +124,16 @@ export interface Snapshot {
   narration: string;
   steer: Steer;
   ending: Ending | null;
+  /** False while the title card is up. Begin (button or tool) flips it. */
+  begun: boolean;
+  /** True while Wren still has the floor after a player move. Cards stay hidden. */
+  waitingOnWren: boolean;
   /** Ids of ledger entries written by the most recent input, for toasts. */
   lastWrites: number[];
 }
 
 export type ChapterInput =
+  | { kind: "begin"; actor: Actor }
   | { kind: "look"; actor: Actor; direction: string }
   | { kind: "listen"; actor: Actor }
   | { kind: "recall"; actor: Actor }
@@ -137,6 +150,7 @@ export type ChapterInput =
   | { kind: "answer"; actor: Actor; answer: string }
   | { kind: "cancel_ask"; actor: Actor }
   | { kind: "follow_my_lead"; actor: Actor }
+  | { kind: "ready"; actor: Actor }
   | { kind: "travel_ended"; actor: "chapter" };
 
 export interface ChapterResult {

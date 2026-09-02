@@ -14,6 +14,13 @@ export interface SceneData {
   id: SceneId;
   title: string;
   subtitle: string;
+  /** What the player needs here, in one plain sentence. Shown in the HUD. */
+  goal: string;
+  /**
+   * Wren's authored lines, used when no agent is playing her. Keys are story
+   * events; the Chapter speaks the matching line at that moment.
+   */
+  wren: Record<string, string>;
   mood: Mood;
   /** Prompt used once to create the persistent Directing world. */
   worldPrompt: string;
@@ -38,11 +45,27 @@ export interface SceneData {
 export const TRUST_START = 3;
 export const TRUST_THRESHOLD = 3;
 
+/** Spoken once, before Scene 1, so the player knows who they are and what they need. */
+export const PROLOGUE: string[] = [
+  "Three days ago the bridge out of the city came down with most of the people you knew on it. You were not on it. Wren pulled you out of the water.",
+  "You have a cut on your arm that has stopped being a cut and started being a fever. You need antibiotics, and then you need the one bridge that is still standing, on the far side of town.",
+  "Wren goes where you go. Whether she keeps doing that is up to you.",
+];
+
 export const SCENES: Record<SceneId, SceneData> = {
   underpass: {
     id: "underpass",
     title: "The Underpass",
     subtitle: "Night. Rain.",
+    goal: "Get through the night without being found. Decide what to do about the voice.",
+    wren: {
+      enter: "Don't answer it. I mean it. Whoever that is, they're not alone out there, and they know exactly what a light means.",
+      answer: "Fine. You've told them where we are. If they come in wrong, we run, and I'm not carrying anyone.",
+      stay_silent: "Good. Hate it as much as you like. Hating it is free.",
+      looked: "There's a man out there with a broken leg. Behind him, something moving. I came back. That's my report.",
+      wounded: "I'm fine. Rebar under the water. Don't make a thing of it.",
+      light_goes: "Lamp's gone. Come on. We're leaving while we still can.",
+    },
     mood: "night_rain",
     worldPrompt:
       "A dark concrete highway underpass at night in heavy rain, seen from inside looking out. Two survivors shelter against a graffiti-covered pillar, backs to the camera, faces unseen. A single failing sodium lamp casts orange light that ends sharply at the edge of the shelter; beyond it only rain and blackness. Wet asphalt reflects the light. Stylized, painterly, high contrast, cinematic, slow camera. No text, no logos.",
@@ -56,17 +79,19 @@ export const SCENES: Record<SceneId, SceneData> = {
       {
         id: "answer",
         label: "Answer the voice",
-        hint: "Call back into the dark. Whoever it is will come to the light.",
+        hint: "Call back into the dark. Whoever it is will come to the light. Wren won't like it.",
+        playerOnly: true,
       },
       {
         id: "stay_silent",
         label: "Stay silent",
-        hint: "Say nothing. Wait for the voice to stop.",
+        hint: "Say nothing and wait for the voice to stop. Safer. Costs you something anyway.",
+        playerOnly: true,
       },
       {
         id: "send_wren",
         label: "Send Wren to look",
-        hint: "Wren leaves the light to see who is out there. This is the same as Wren using look toward the voice.",
+        hint: "Wren leaves the light to see who is out there. Something could happen to her.",
         playerOnly: true,
       },
     ],
@@ -111,13 +136,23 @@ export const SCENES: Record<SceneId, SceneData> = {
     },
     openables: [],
     lightGoes:
-      "The lamp buzzes, dims, and goes. The voice has stopped at some point; you did not notice when. You leave in the dark.",
+      "The lamp buzzes, dims, and goes. The voice has stopped at some point; you did not notice when. You are still here, in the dark.",
   },
 
   pharmacy: {
     id: "pharmacy",
     title: "The Pharmacy",
     subtitle: "Dawn. Smoke.",
+    goal: "Get the antibiotics out of the locked cabinet. Someone is in the back room.",
+    wren: {
+      enter: "That's the one. Second shelf. Give me a second with the lock and keep your eyes on that doorway.",
+      enter_wounded: "That's the one. Second shelf. Leg's fine. Watch the doorway, not me.",
+      crowbar_taken: "Okay. You've got it. Go on then.",
+      crowbar_taken_wounded: "Right. Take the crowbar off the one who can't run. Go on then.",
+      opened: "There. Take the whole bottle, not a handful. We're not coming back here.",
+      leave_it: "You're leaving it. With your arm like that. Fine. It's your arm.",
+      light_goes: "Can't see the lock anymore. We're done here.",
+    },
     mood: "dawn_smoke",
     worldPrompt:
       "Interior of a looted pharmacy at dawn, thin grey smoke drifting through broken front windows. Overturned shelves, pill bottles on the floor, a long counter, and behind it a tall locked metal medicine cabinet. A dark doorway leads to a back room. Cold blue morning light from the front, deep shadow at the back. Stylized, painterly, cinematic, slow camera. Two survivors stand near the counter, seen from behind. No text, no logos.",
@@ -133,25 +168,26 @@ export const SCENES: Record<SceneId, SceneData> = {
       {
         id: "take_crowbar",
         label: "Take the crowbar from Wren",
-        hint: "You take the crowbar out of her hands. This is the same as Wren using give.",
+        hint: "Take it out of her hands and do it yourself. If she is hurt, she will remember this.",
         playerOnly: true,
       },
       {
         id: "force_cabinet",
         label: "Force the cabinet yourself",
-        hint: "Needs the crowbar in your hands.",
+        hint: "Only works if the crowbar is in your hands.",
         playerOnly: true,
       },
       {
         id: "let_wren_open",
         label: "Ask Wren to open the cabinet",
-        hint: "Wren uses the crowbar on the cabinet. This is the same as Wren using open.",
+        hint: "She has the crowbar. Let her do it. She is good at this.",
         playerOnly: true,
       },
       {
         id: "leave_it",
         label: "Leave without the medicine",
-        hint: "Walk away from the cabinet. The arm will get worse.",
+        hint: "Walk away from the cabinet. Your arm will get worse.",
+        playerOnly: true,
       },
     ],
     exits: [
@@ -195,13 +231,24 @@ export const SCENES: Record<SceneId, SceneData> = {
     },
     openables: ["cabinet", "medicine cabinet", "the cabinet", "padlock", "lock"],
     lightGoes:
-      "The smoke thickens until the cabinet is a shape and then not even that. You leave with what you have.",
+      "The smoke thickens until the cabinet is a shape and then not even that. You are still here, with what you have.",
   },
 
   bridge: {
     id: "bridge",
     title: "The Bridge",
     subtitle: "Dusk. Wind.",
+    goal: "Cross the river. The bridge holds one at a time. Someone goes first.",
+    wren: {
+      enter: "One at a time. That's not me being careful, that's the bridge telling you.",
+      enter_wounded: "One at a time. And before you ask: yes, I can make it across on this leg. I'd rather not do it second.",
+      cross_first: "Alright. Watch the left cables. If it goes, don't follow me. I mean that.",
+      you_first: "Go. I'll be right behind you.",
+      you_first_low: "Go on, then. I'll see.",
+      wait: "The wind isn't dropping. It's dusk on a river. It never drops.",
+      follow: "I'm coming. Don't stop on the deck.",
+      light_goes: "That's it. That's the light. We should have gone.",
+    },
     mood: "dusk_wind",
     worldPrompt:
       "A long damaged steel truss bridge over a wide grey river at dusk, strong wind, the deck sagging in the middle with sections of railing missing. Two survivors stand at the near end, small against the span, seen from behind. Deep orange and violet sky, smoke on the far horizon behind them. Stylized, painterly, cinematic, slow camera. No text, no logos.",
@@ -217,18 +264,20 @@ export const SCENES: Record<SceneId, SceneData> = {
       {
         id: "cross_first",
         label: "Cross first",
-        hint: "Wren goes across the span first, while the player watches from this side.",
+        hint: "Wren crosses first while you watch from this side. Then it is your turn.",
+        playerOnly: true,
       },
       {
         id: "player_first",
         label: "You go first",
-        hint: "The player crosses first. Wren decides whether to follow.",
+        hint: "You cross first. Whether Wren follows depends on everything so far.",
         playerOnly: true,
       },
       {
         id: "wait",
         label: "Wait for the wind to drop",
-        hint: "Neither crosses yet. Costs a beat.",
+        hint: "Neither of you crosses yet. The light is going.",
+        playerOnly: true,
       },
     ],
     exits: [],

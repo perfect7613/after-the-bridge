@@ -26,6 +26,30 @@ body {
   background: rgba(217, 138, 58, 0.35);
 }
 
+.world-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.world-video {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.world-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .rain {
   background-image: repeating-linear-gradient(
     100deg,

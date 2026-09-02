@@ -18,6 +18,15 @@ function writeLocal(map: WorldMap) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
 }
 
+export function peekWorldId(scene: SceneId, serverWorlds: WorldMap): string | undefined {
+  return serverWorlds[scene] ?? readLocal()[scene];
+}
+
+export function rememberWorld(scene: SceneId, id: string) {
+  writeLocal({ ...readLocal(), [scene]: id });
+  console.info(`[world] created ${scene}: ${id}\nPin it: REACTOR_WORLD_IDS=${JSON.stringify({ ...readLocal() })}`);
+}
+
 /**
  * Each Scene maps to one persistent Directing world. Ids come from the server
  * config first, then this browser's storage, and are created on demand as a
@@ -28,14 +37,10 @@ export async function resolveWorld(
   serverWorlds: WorldMap,
   create: (prompt: string) => Promise<string>,
 ): Promise<{ id: string; created: boolean }> {
-  const fromServer = serverWorlds[scene];
-  if (fromServer) return { id: fromServer, created: false };
-
-  const local = readLocal();
-  if (local[scene]) return { id: local[scene]!, created: false };
+  const existing = peekWorldId(scene, serverWorlds);
+  if (existing) return { id: existing, created: false };
 
   const id = await create(SCENES[scene].worldPrompt);
-  writeLocal({ ...readLocal(), [scene]: id });
-  console.info(`[world] created ${scene}: ${id}\nPin it: REACTOR_WORLD_IDS=${JSON.stringify({ ...readLocal(), [scene]: id })}`);
+  rememberWorld(scene, id);
   return { id, created: true };
 }
