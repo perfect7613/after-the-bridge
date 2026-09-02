@@ -4,7 +4,7 @@ import type { SceneId } from "@/src/chapter";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const LIVE_MODELS = ["reactor/visko-orbis-stable", "reactor/happy-oyster-director"];
+const DIRECTING_MODEL = "reactor/happy-oyster-director";
 const TOKEN_URL = "https://api.reactor.inc/tokens";
 /** Short-lived; the client resolver re-mints before expiry. */
 const TOKEN_LIFETIME_SECONDS = 30 * 60;
@@ -44,7 +44,7 @@ export async function POST() {
       authorization_details: [
         {
           type: "session",
-          resources: { models: { match: LIVE_MODELS } },
+          resources: { models: { match: [DIRECTING_MODEL] } },
           constraints: { max_sessions: MAX_SESSIONS },
         },
       ],

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SCENES, type SceneId, type Snapshot } from "@/src/chapter";
 import { EndingCard, GameShell, StartCard, type ToastMessage } from "@/src/chrome";
 import { sarvamVoice, silentVoice, voiceConfigured, type Voice } from "@/src/voice";
-import { getWorldConfig, HappyOysterWorld, OrbisWorld, PlaceholderWorld, type WorldConfig, type WorldMode, type WorldStatus } from "@/src/world";
+import { getWorldConfig, HappyOysterWorld, PlaceholderWorld, type WorldConfig, type WorldMode, type WorldStatus } from "@/src/world";
 import { getSession, type WrenState } from "@/src/wren";
 
 type Phase = "start" | "playing" | "ended";
@@ -72,9 +72,7 @@ export function Game() {
       setConfig(c);
       const params = new URLSearchParams(window.location.search);
       const forced = params.get("world");
-      if (forced === "placeholder") setWorldMode("placeholder");
-      else if (forced === "happy-oyster") setWorldMode("happy-oyster");
-      else setWorldMode(c.configured ? "orbis" : "placeholder");
+      setWorldMode(forced === "placeholder" ? "placeholder" : c.configured ? "happy-oyster" : "placeholder");
       if (params.get("begin") === "1") chapter.input({ kind: "begin", actor: "player" });
     });
     void voiceConfigured().then((ok) => {
@@ -152,7 +150,7 @@ export function Game() {
     return (
       <StartCard
         webmcp={wrenState.webmcp}
-        liveWorld={worldMode !== "placeholder"}
+        liveWorld={worldMode === "happy-oyster"}
         onBegin={begin}
       />
     );
@@ -173,11 +171,9 @@ export function Game() {
     onStatus,
   };
   const world =
-    worldMode === "orbis" ? (
-      <OrbisWorld key="orbis" {...worldProps} onSteering={onSteering} />
-    ) : worldMode === "happy-oyster" ? (
+    worldMode === "happy-oyster" ? (
       <HappyOysterWorld
-        key="oyster"
+        key="live"
         {...worldProps}
         worlds={config.worlds}
         onSteering={onSteering}
@@ -210,7 +206,7 @@ export function Game() {
           return !v;
         });
       }}
-      onToggleWorld={config.configured ? () => setWorldMode((m) => (m === "placeholder" ? "orbis" : "placeholder")) : undefined}
+      onToggleWorld={config.configured ? () => setWorldMode((m) => (m === "happy-oyster" ? "placeholder" : "happy-oyster")) : undefined}
       onChoice={onChoice}
       onExit={onExit}
       onAnswer={onAnswer}
@@ -221,10 +217,9 @@ export function Game() {
 
 function describeWorld(mode: WorldMode, status: WorldStatus, detail?: string): { label: string; tone: "live" | "warn" | "muted" } {
   if (mode === "placeholder") return { label: "Placeholder world", tone: "muted" };
-  const liveName = mode === "orbis" ? "Live · Orbis" : "Live · Happy Oyster";
   switch (status) {
     case "live":
-      return { label: liveName, tone: "live" };
+      return { label: "Live · Happy Oyster", tone: "live" };
     case "held":
       return { label: "Signal held", tone: "warn" };
     case "failed":
