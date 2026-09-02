@@ -97,6 +97,7 @@ function Session({ scene, steer, active, onClock, onEnded, onStatus, onSteering 
   }, [orbis.status]);
 
   useViskoOrbisStableState((msg) => {
+    console.info("[orbis] state", { started: msg.started, running: msg.running, chunk: msg.current_chunk });
     setSnap(msg);
   });
 
@@ -221,7 +222,10 @@ function Session({ scene, steer, active, onClock, onEnded, onStatus, onSteering 
 
     if (orbis.status !== "ready") return;
 
-    if (liveScene.current && liveScene.current !== scene && snap?.started) {
+    if (snap?.started) launching.current = false;
+
+    // state only arrives after a command. Waiting for it before start deadlocks.
+    if (liveScene.current && liveScene.current !== scene) {
       report("starting", "Cutting to the next scene");
       step(
         orbis.reset().then(() => {
@@ -234,42 +238,36 @@ function Session({ scene, steer, active, onClock, onEnded, onStatus, onSteering 
       return;
     }
 
-    if (snap?.started) launching.current = false;
+    const alreadyGoing = liveScene.current === scene && (launching.current || snap?.started === true);
+    if (alreadyGoing) return;
 
-    if (!snap) {
-      report("starting", "The world is listening…");
-      return;
-    }
-
-    if (!snap.started && !launching.current) {
-      launching.current = true;
-      const prompt = orbisInitialPrompt(scene);
-      lastSteerSeq.current = steerRef.current.seq;
-      report("starting", "The light is coming up…");
-      setPriming(true);
-      step(
-        (async () => {
-          const resolutions = Array.isArray(snap.available_resolutions)
-            ? snap.available_resolutions.filter((r): r is string => typeof r === "string")
-            : [];
-          if (resolutions.includes("1080p") && snap.resolution !== "1080p") {
-            await orbis.setResolution({ resolution: "1080p" });
-          }
-          // SDK never rejects; a missing reply is not a failed send.
-          await orbis.setPrompt({ prompt });
-          await orbis.start();
-          liveScene.current = scene;
-          if (clockStart.current == null) clockStart.current = Date.now();
-          waitChunk.current = (snap.current_chunk ?? 0) + 1;
-          onSteering?.(true);
-          report("live");
-        })(),
-        (cause) => {
-          launching.current = false;
-          report("failed", cause instanceof Error ? cause.message : String(cause));
-        },
-      );
-    }
+    launching.current = true;
+    const prompt = orbisInitialPrompt(scene);
+    lastSteerSeq.current = steerRef.current.seq;
+    report("starting", "The light is coming up…");
+    setPriming(true);
+    step(
+      (async () => {
+        const resolutions = Array.isArray(snap?.available_resolutions)
+          ? snap.available_resolutions.filter((r): r is string => typeof r === "string")
+          : [];
+        if (resolutions.includes("1080p") && snap?.resolution !== "1080p") {
+          await orbis.setResolution({ resolution: "1080p" });
+        }
+        await orbis.setPrompt({ prompt });
+        await orbis.start();
+        liveScene.current = scene;
+        if (clockStart.current == null) clockStart.current = Date.now();
+        waitChunk.current = (snap?.current_chunk ?? 0) + 1;
+        onSteering?.(true);
+        report("live");
+        console.info("[orbis] started", scene);
+      })(),
+      (cause) => {
+        launching.current = false;
+        report("failed", cause instanceof Error ? cause.message : String(cause));
+      },
+    );
   }, [
     active,
     scene,
@@ -289,7 +287,7 @@ function Session({ scene, steer, active, onClock, onEnded, onStatus, onSteering 
   ]);
 
   useEffect(() => {
-    if (status !== "live" || !snap?.started || spentFor.current) return;
+    if (status !== "live" || spentFor.current) return;
     if (steer.seq === lastSteerSeq.current || !steer.instruction) return;
     lastSteerSeq.current = steer.seq;
     const prompt = orbisFollowPrompt(scene, steer.instruction);
